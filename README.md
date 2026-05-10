@@ -38,32 +38,6 @@ Traditional justice systems face critical challenges:
 - ✅ **Virtual Hearings** – Video conferencing integration
 - ✅ **Emergency SOS** – Instant alerts to emergency contacts
 
-## 📁 Project Structure
-
-decentralized-justice-system/
-│
-├── backend/ # FastAPI Backend
-│ ├── app/
-│ │ ├── api/ # API endpoints (auth, fir, cases, etc.)
-│ │ ├── core/ # Security, roles, config
-│ │ ├── services/ # IPFS, blockchain, email services
-│ │ └── main.py # Entry point
-│ └── requirements.txt
-│
-├── frontend/ # React Frontend
-│ ├── src/
-│ │ ├── pages/ # Role-based dashboards
-│ │ ├── shared/ # Common components & services
-│ │ └── App.tsx
-│ └── package.json
-│
-├── blockchain/ # Smart Contracts
-│ ├── contracts/ # Solidity contracts
-│ ├── scripts/ # Deployment scripts
-│ └── hardhat.config.cjs
-│
-└── README.md
-
 
 
 ---
@@ -91,13 +65,13 @@ Sensitive roles cannot be self-registered. Authorized personnel require **onboar
 ## 🚀 How Evidence Integrity Works
 
 📁 User uploads evidence file
-↓
+
 🔐 System calculates SHA-256 hash
-↓
+
 📦 File stored on IPFS → receives CID
-↓
+
 ⛓️ Hash + CID anchored to blockchain
-↓
+
 ✅ Anyone can verify by re-calculating hash
 
 
@@ -117,12 +91,13 @@ Sensitive roles cannot be self-registered. Authorized personnel require **onboar
 
 ---
 
-### Step 1: Clone Repository
+### Clone Repository
 
 ```bash
 git clone https://github.com/iraj721/decentralized-justice-system.git
 cd decentralized-justice-system
 
+Step 1: Backend: 
 
 cd backend
 
@@ -140,6 +115,7 @@ cp .env.example .env
 # Start backend
 python -m uvicorn app.main:app --reload
 
+Step 2: Frontend: 
 
 cd frontend
 
@@ -153,7 +129,7 @@ cp .env.example .env
 npm run dev
 
 
-Step 4: Setup Blockchain (Ganache)
+Step 3: Setup Blockchain (Ganache)
 
 Launch Ganache GUI
 Create new workspace → Add project
@@ -167,9 +143,11 @@ npx hardhat run scripts/deploy-ganache.mjs --network ganache
 
 Copy contract address to CHAIN_CONTRACT_ADDRESS in backend .env
 
-Step 5: Start IPFS Daemon
+Step 4: Start IPFS Daemon
 
 ipfs daemon
+
+```bash
 
 👥 Contributors
 Iraj Tahir – Full Stack Developer & Blockchain Architect
