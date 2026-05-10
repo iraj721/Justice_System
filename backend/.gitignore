@@ -1,0 +1,46 @@
+# Env files
+.env
+.env.local
+.env.*.local
+
+# Passwords & Auth
+passwords.json
+*.key
+*.pem
+
+# Database files
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+logs/
+*.log
+uvicorn.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Blockchain artifacts (optional, can commit)
+# blockchain/artifacts/ - isko commit kar sakte ho

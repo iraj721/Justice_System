@@ -1,0 +1,122 @@
+# ============================================
+# SENSITIVE - NEVER COMMIT
+# ============================================
+
+# Environment files (ALL .env files)
+**/.env
+**/.env.*
+**/.env.local
+**/.env.*.local
+
+# Secrets & keys
+**/passwords.json
+**/*.pem
+**/*.key
+**/*.priv
+**/id_rsa*
+**/secret*
+
+# Private keys (blockchain)
+**/DEPLOYER_PRIVATE_KEY*
+**/PRIVATE_KEY*
+
+# ============================================
+# DATABASES - DON'T COMMIT
+# ============================================
+
+# SQLite databases
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+
+# JSON data files (user data)
+**/data/*.json
+**/data/*
+!/data/.gitkeep
+
+# ============================================
+# LOGS
+# ============================================
+
+**/*.log
+**/logs/
+**/uvicorn.log
+**/npm-debug.log*
+
+# ============================================
+# DEPENDENCIES - DON'T COMMIT
+# ============================================
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/*.so
+**/venv/
+**/env/
+**/ENV/
+**/venv.bak/
+**/env.bak/
+
+# Node
+**/node_modules/
+**/dist/
+**/build/
+**/.vite/
+
+# ============================================
+# IDE - PERSONAL SETTINGS
+# ============================================
+
+# VSCode
+**/.vscode/
+**/.vscode/settings.json
+
+# IntelliJ / WebStorm
+**/.idea/
+**/*.iml
+
+# Sublime Text
+**/*.sublime-*
+
+# ============================================
+# OS FILES
+# ============================================
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+.directory
+*~
+
+# ============================================
+# ARTIFACTS (Optional - up to you)
+# ============================================
+
+# Blockchain artifacts (large, but can commit)
+# blockchain/artifacts/  # Comment if you want to commit
+
+# ============================================
+# LOCAL CONFIGURATIONS
+# ============================================
+
+**/.local/
+**/.cache/
+**/.npm/
+
+# ============================================
+# TEMP FILES
+# ============================================
+
+**/*.tmp
+**/*.temp
+**/*.swp
+**/*.swo
