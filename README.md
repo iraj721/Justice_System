@@ -147,7 +147,6 @@ Step 4: Start IPFS Daemon
 
 ipfs daemon
 
-```bash
 
 👥 Contributors
 Iraj Tahir – Full Stack Developer & Blockchain Architect
