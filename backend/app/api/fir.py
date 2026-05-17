@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from datetime import datetime, timezone
@@ -28,8 +29,10 @@ class FIRStatusUpdate(BaseModel):
     status: str
     remarks: Optional[str] = None
 
+
 async def auto_create_case_from_fir(fir_data: dict, investigator_email: str) -> dict:
-    """Automatically create a case when FIR is accepted"""
+    """Automatically create a case when FIR is accepted - FAST VERSION"""
+    
     case_id = f"CASE-{uuid.uuid4().hex[:10].upper()}"
     case_number = f"JUSTICE-CASE-{datetime.now().year}-{uuid.uuid4().hex[:6].upper()}"
     
@@ -65,6 +68,45 @@ async def auto_create_case_from_fir(fir_data: dict, investigator_email: str) -> 
     
     await mongo_storage.save_case(case_id, case_data)
     return case_data
+
+
+async def send_acceptance_email_background(fir: dict, case: dict, current_user: dict):
+    """Send email in background - doesn't block the response"""
+    try:
+        from app.services.notification_service import notification_service
+        
+        complainant_email = fir.get("complainant_email")
+        complainant_name = fir.get("complainant_name", "User")
+        
+        if complainant_email:
+            email_body = f"""
+            <html>
+            <body style="font-family: Arial, sans-serif;">
+                <h2 style="color: #4f46e5;">✓ Your FIR has been ACCEPTED!</h2>
+                <p>Dear <strong>{complainant_name}</strong>,</p>
+                <p>Good news! Your FIR has been reviewed and <strong>ACCEPTED</strong> by the investigator.</p>
+                <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; margin: 15px 0;">
+                    <p><strong>📋 FIR Number:</strong> {fir.get('fir_number')}</p>
+                    <p><strong>⚖️ Case Number:</strong> {case.get('case_number')}</p>
+                    <p><strong>👮 Assigned Investigator:</strong> {current_user.get('full_name', current_user['email'])}</p>
+                </div>
+                <p>You can now track your case progress from your dashboard.</p>
+                <a href="https://justice-system.vercel.app/app" style="display: inline-block; background: #4f46e5; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">View Case Status</a>
+                <hr style="margin: 20px 0;">
+                <p style="color: #6b7280; font-size: 12px;">This is an automated notification from Justice System.</p>
+            </body>
+            </html>
+            """
+            
+            await notification_service.send_email(
+                to_email=complainant_email,
+                subject=f"✅ FIR Accepted - Case #{case.get('case_number')}",
+                body=email_body
+            )
+            print(f"✅ Acceptance email sent to {complainant_email}")
+    except Exception as e:
+        print(f"❌ Failed to send acceptance email: {e}")
+
 
 @router.post("/")
 async def create_fir(
@@ -118,11 +160,13 @@ async def create_fir(
         "hash": fir_data.get("hash", "")
     }
 
+
 @router.get("/pending")
 async def get_pending_firs(current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
     all_firs = await mongo_storage.get_all_firs()
     pending = [f for f in all_firs if f.get("status") in ["SUBMITTED", "UNDER_REVIEW"]]
     return sorted(pending, key=lambda x: x.get("created_at", ""), reverse=True)
+
 
 @router.put("/{fir_id}/status")
 async def update_fir_status(
@@ -157,44 +201,13 @@ async def update_fir_status(
         fir["case_id"] = created_case["case_id"]
         fir["case_number"] = created_case["case_number"]
         
-        # Send email to complainant
-        from app.services.notification_service import notification_service
-        
-        complainant_email = fir.get("complainant_email")
-        complainant_name = fir.get("complainant_name", "User")
-        
-        email_body = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <div style="background: linear-gradient(135deg, #6366f1, #4f46e5); padding: 20px; text-align: center; color: white; border-radius: 10px 10px 0 0;">
-                <h2 style="margin: 0;">🏛️ Justice System</h2>
-            </div>
-            <div style="background: #0c0f1a; padding: 30px; border: 1px solid #1e293b; border-radius: 0 0 10px 10px;">
-                <h3 style="color: #818cf8;">✓ Your FIR has been ACCEPTED!</h3>
-                <p>Dear <strong>{complainant_name}</strong>,</p>
-                <p>Good news! Your FIR has been reviewed and <strong>ACCEPTED</strong> by the investigator.</p>
-                <div style="background: #1e293b; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                    <p><strong>📋 FIR Number:</strong> {fir.get('fir_number')}</p>
-                    <p><strong>⚖️ Case Number:</strong> {created_case.get('case_number')}</p>
-                    <p><strong>👮 Assigned Investigator:</strong> {current_user.get('full_name', current_user['email'])}</p>
-                </div>
-                <p>You can now track your case progress from your dashboard.</p>
-                <a href="http://localhost:5173/app" style="display: inline-block; background: #6366f1; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-top: 15px;">📱 View Case Status</a>
-                <hr style="border-color: #1e293b; margin: 20px 0;">
-                <p style="color: #64748b; font-size: 12px;">This is an automated notification from Justice System.</p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        await notification_service.send_email(
-            to_email=complainant_email,
-            subject=f"✅ FIR Accepted - Case #{created_case.get('case_number')}",
-            body=email_body
-        )
+        # SEND EMAIL IN BACKGROUND (DON'T WAIT)
+        asyncio.create_task(send_acceptance_email_background(fir, created_case, current_user))
     
+    # Save FIR changes
     await mongo_storage.update_fir(fir_id, fir)
     
+    # Prepare response
     response = {
         "message": f"FIR status updated from {old_status} to {payload.status}",
         "fir_id": fir_id,
@@ -207,15 +220,18 @@ async def update_fir_status(
     
     return response
 
+
 @router.get("/my")
 async def get_my_firs(current_user: dict = Depends(require_roles(UserRole.PUBLIC_USER))):
     all_firs = await mongo_storage.get_all_firs()
     firs = [f for f in all_firs if f.get("complainant_email") == current_user["email"]]
     return sorted(firs, key=lambda x: x.get("created_at", ""), reverse=True)
 
+
 @router.get("/all")
 async def get_all_firs(current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR, UserRole.COURT))):
     return await mongo_storage.get_all_firs()
+
 
 @router.get("/{fir_id}")
 async def get_fir(fir_id: str, current_user: dict = Depends(get_current_user)):
