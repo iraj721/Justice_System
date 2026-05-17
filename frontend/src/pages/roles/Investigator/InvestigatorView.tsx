@@ -661,7 +661,10 @@ export function InvestigatorView({
     status: string,
     remarks?: string,
   ) {
+    // Show loading toast
+    showToast(`⏳ Processing FIR ${status}...`, "info");
     setLoading(true);
+
     try {
       const response = await apiRequest<FIRStatusResponse>(
         `/fir/${firId}/status`,
@@ -671,12 +674,23 @@ export function InvestigatorView({
           body: { status, remarks },
         },
       );
+
+      // Show success message with additional info if case was created
+      let successMessage = `✅ FIR ${status}!`;
+      if (status === "ACCEPTED" && response.case) {
+        successMessage = `✅ FIR ACCEPTED! Case ${response.case.case_number} has been auto-created.`;
+      }
+      showToast(successMessage, "success");
+
+      // Refresh all data
       await loadPendingFirs();
       await loadAcceptedFirs();
       await onRefresh();
-      showToast(`✅ FIR ${status}!`, "success");
     } catch (err) {
-      showToast("❌ Failed to update status", "error");
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to update status";
+      showToast(`❌ ${errorMessage}`, "error");
+      console.error("Update FIR status error:", err);
     } finally {
       setLoading(false);
     }
@@ -1321,16 +1335,18 @@ export function InvestigatorView({
                           onClick={() =>
                             updateFIRStatus(fir.fir_id, "ACCEPTED")
                           }
+                          disabled={loading}
                         >
-                          ✅ Accept FIR
+                          {loading ? "⏳ Processing..." : "✅ Accept FIR"}
                         </button>
                         <button
                           className="btn btn-primary"
                           onClick={() =>
                             updateFIRStatus(fir.fir_id, "UNDER_REVIEW")
                           }
+                          disabled={loading}
                         >
-                          🔍 Under Review
+                          {loading ? "⏳ Processing..." : "🔍 Under Review"}
                         </button>
                         <button
                           className="btn btn-danger"
@@ -1338,8 +1354,9 @@ export function InvestigatorView({
                             const r = prompt("Enter reason:");
                             if (r) updateFIRStatus(fir.fir_id, "REJECTED", r);
                           }}
+                          disabled={loading}
                         >
-                          ❌ Reject FIR
+                          {loading ? "⏳ Processing..." : "❌ Reject FIR"}
                         </button>
                       </div>
                       {/* ============ END NEW BUTTON ============ */}
