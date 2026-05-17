@@ -1,3 +1,4 @@
+# backend/app/api/feedback.py
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from datetime import datetime, timezone
@@ -5,7 +6,7 @@ from typing import Optional
 import uuid
 from app.core.authz import get_current_user, require_roles
 from app.core.roles import UserRole
-from app.services.ipfs_storage import ipfs_storage
+from app.services.mongo_storage import mongo_storage
 from app.services.notification_service import notification_service
 from app.api.websocket import notify_case_update
 
@@ -35,7 +36,7 @@ async def submit_feedback(
     case = None
     investigator_email = None
     if payload.case_id:
-        case = ipfs_storage.get_case(payload.case_id)
+        case = await mongo_storage.get_case(payload.case_id)
         if case:
             investigator_email = case.get("investigator_email")
     
@@ -54,7 +55,7 @@ async def submit_feedback(
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     
-    ipfs_storage.save_feedback(feedback_id, feedback_data)
+    await mongo_storage.save_feedback(feedback_id, feedback_data)
     
     # ============ 1. ADD TIMELINE EVENT TO CASE ============
     if case and payload.case_id:
@@ -80,7 +81,7 @@ async def submit_feedback(
         })
         
         case["updated_at"] = datetime.now(timezone.utc).isoformat()
-        ipfs_storage.update_case(payload.case_id, case)
+        await mongo_storage.update_case(payload.case_id, case)
         
         # WebSocket notification for real-time update
         await notify_case_update(payload.case_id, "feedback_added", {
@@ -173,7 +174,7 @@ async def get_case_feedback(
     current_user: dict = Depends(get_current_user)
 ):
     """Get all feedback for a specific case"""
-    all_feedback = ipfs_storage.get_all_feedback()
+    all_feedback = await mongo_storage.get_all_feedback()
     case_feedback = [f for f in all_feedback if f.get("case_id") == case_id]
     return sorted(case_feedback, key=lambda x: x.get("created_at", ""), reverse=True)
 
@@ -181,7 +182,7 @@ async def get_case_feedback(
 @router.get("/my-feedback")
 async def get_my_feedback(current_user: dict = Depends(get_current_user)):
     """Get feedback submitted by current user"""
-    all_feedback = ipfs_storage.get_all_feedback()
+    all_feedback = await mongo_storage.get_all_feedback()
     my_feedback = [f for f in all_feedback if f.get("user_email") == current_user["email"]]
     return sorted(my_feedback, key=lambda x: x.get("created_at", ""), reverse=True)
 
@@ -204,11 +205,11 @@ async def get_all_feedback(
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))
 ):
     """Get all feedback for investigator's cases"""
-    all_feedback = ipfs_storage.get_all_feedback()
+    all_feedback = await mongo_storage.get_all_feedback()
     
     # If investigator, only show feedback for their cases
     investigator_email = current_user["email"]
-    all_cases = ipfs_storage.get_all_cases()
+    all_cases = await mongo_storage.get_all_cases()
     investigator_case_ids = [c.get("case_id") for c in all_cases if c.get("investigator_email") == investigator_email]
     
     filtered_feedback = [f for f in all_feedback if f.get("case_id") in investigator_case_ids]

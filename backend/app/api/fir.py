@@ -3,11 +3,11 @@ from pydantic import BaseModel
 from datetime import datetime, timezone
 from typing import Optional
 import uuid
+import hashlib
+import json
 from app.core.authz import require_roles, get_current_user
 from app.core.roles import UserRole
-from app.services.ipfs_storage import ipfs_storage
-from app.core.ipfs_client import ipfs_client
-from app.services.chain_anchor import anchor_sha256
+from app.services.mongo_storage import mongo_storage
 
 router = APIRouter(prefix="/fir", tags=["FIR"])
 
@@ -29,7 +29,7 @@ class FIRStatusUpdate(BaseModel):
     remarks: Optional[str] = None
 
 async def auto_create_case_from_fir(fir_data: dict, investigator_email: str) -> dict:
-    """Automatically create a case when FIR is accepted - ASYNC VERSION"""
+    """Automatically create a case when FIR is accepted"""
     case_id = f"CASE-{uuid.uuid4().hex[:10].upper()}"
     case_number = f"JUSTICE-CASE-{datetime.now().year}-{uuid.uuid4().hex[:6].upper()}"
     
@@ -58,18 +58,12 @@ async def auto_create_case_from_fir(fir_data: dict, investigator_email: str) -> 
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
     
-    # Upload case to IPFS - DIRECT AWAIT (no new event loop)
-    try:
-        case_cid = await ipfs_client.upload_json(case_data)
-        case_hash = ipfs_client.generate_hash(case_data)
-        case_data["ipfs_cid"] = case_cid
-        case_data["hash"] = case_hash
-    except Exception as e:
-        print(f"⚠️ IPFS upload failed for case: {e}")
-        case_data["ipfs_cid"] = "UPLOAD_FAILED"
-        case_data["hash"] = ipfs_client.generate_hash(case_data)
+    # Generate hash for case
+    case_hash = hashlib.sha256(json.dumps(case_data, default=str).encode()).hexdigest()
+    case_data["hash"] = case_hash
+    case_data["ipfs_cid"] = "STORED_IN_MONGODB"
     
-    ipfs_storage.save_case(case_id, case_data)
+    await mongo_storage.save_case(case_id, case_data)
     return case_data
 
 @router.post("/")
@@ -80,12 +74,9 @@ async def create_fir(
     fir_id = f"FIR-{uuid.uuid4().hex[:10].upper()}"
     fir_number = f"JUSTICE-{datetime.now().year}-{uuid.uuid4().hex[:6].upper()}"
     
-    fir_hash = ipfs_storage.generate_hash(payload.dict())
-    
     fir_data = {
         "fir_id": fir_id,
         "fir_number": fir_number,
-        "fir_hash": fir_hash,
         "complainant_email": current_user["email"],
         "complainant_name": payload.complainant_name,
         "complainant_contact": payload.complainant_contact,
@@ -112,37 +103,24 @@ async def create_fir(
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     
-    # UPLOAD FIR TO IPFS AND GET CID
-    try:
-        fir_cid = await ipfs_client.upload_json(fir_data)
-        fir_hash_ipfs = ipfs_client.generate_hash(fir_data)
-        fir_data["ipfs_cid"] = fir_cid
-        fir_data["hash"] = fir_hash_ipfs
-    except Exception as e:
-        print(f"⚠️ IPFS upload failed for FIR: {e}")
-        fir_data["ipfs_cid"] = "UPLOAD_FAILED"
-        fir_data["hash"] = ipfs_client.generate_hash(fir_data)
+    # Generate hash for FIR
+    fir_hash = hashlib.sha256(json.dumps(fir_data, default=str).encode()).hexdigest()
+    fir_data["hash"] = fir_hash
+    fir_data["ipfs_cid"] = "STORED_IN_MONGODB"
     
-    ipfs_storage.save_fir(fir_id, fir_data)
-    anchor_sha256(
-        object_type="FIR",
-        object_id=fir_id,
-        sha256_hex=fir_data.get("hash", ""),
-        ipfs_cid=fir_data.get("ipfs_cid", ""),
-    )
+    await mongo_storage.save_fir(fir_id, fir_data)
     
     return {
         "message": "FIR submitted successfully",
         "fir_id": fir_id,
         "fir_number": fir_number,
         "status": "SUBMITTED",
-        "ipfs_cid": fir_data.get("ipfs_cid", ""),
         "hash": fir_data.get("hash", "")
     }
 
 @router.get("/pending")
 async def get_pending_firs(current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
-    all_firs = ipfs_storage.get_all_firs()
+    all_firs = await mongo_storage.get_all_firs()
     pending = [f for f in all_firs if f.get("status") in ["SUBMITTED", "UNDER_REVIEW"]]
     return sorted(pending, key=lambda x: x.get("created_at", ""), reverse=True)
 
@@ -152,7 +130,7 @@ async def update_fir_status(
     payload: FIRStatusUpdate,
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))
 ):
-    fir = ipfs_storage.get_fir(fir_id)
+    fir = await mongo_storage.get_fir(fir_id)
     if not fir:
         raise HTTPException(status_code=404, detail="FIR not found")
     
@@ -179,7 +157,7 @@ async def update_fir_status(
         fir["case_id"] = created_case["case_id"]
         fir["case_number"] = created_case["case_number"]
         
-        # ============ NEW: Send email to complainant ============
+        # Send email to complainant
         from app.services.notification_service import notification_service
         
         complainant_email = fir.get("complainant_email")
@@ -203,7 +181,7 @@ async def update_fir_status(
                 <p>You can now track your case progress from your dashboard.</p>
                 <a href="http://localhost:5173/app" style="display: inline-block; background: #6366f1; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-top: 15px;">📱 View Case Status</a>
                 <hr style="border-color: #1e293b; margin: 20px 0;">
-                <p style="color: #64748b; font-size: 12px;">This is an automated notification from Decentralized Justice System.</p>
+                <p style="color: #64748b; font-size: 12px;">This is an automated notification from Justice System.</p>
             </div>
         </body>
         </html>
@@ -215,15 +193,7 @@ async def update_fir_status(
             body=email_body
         )
     
-    ipfs_storage.update_fir(fir_id, fir)
-
-    if created_case:
-        anchor_sha256(
-            object_type="CASE",
-            object_id=created_case.get("case_id", ""),
-            sha256_hex=created_case.get("hash", ""),
-            ipfs_cid=created_case.get("ipfs_cid", ""),
-        )
+    await mongo_storage.update_fir(fir_id, fir)
     
     response = {
         "message": f"FIR status updated from {old_status} to {payload.status}",
@@ -234,24 +204,22 @@ async def update_fir_status(
     if created_case:
         response["case"] = created_case
         response["message"] = f"✅ FIR accepted! Case '{created_case['case_number']}' has been auto-created."
-        response["case_ipfs_cid"] = created_case.get("ipfs_cid", "")
-        response["case_hash"] = created_case.get("hash", "")
     
     return response
 
 @router.get("/my")
 async def get_my_firs(current_user: dict = Depends(require_roles(UserRole.PUBLIC_USER))):
-    all_firs = ipfs_storage.get_all_firs()
+    all_firs = await mongo_storage.get_all_firs()
     firs = [f for f in all_firs if f.get("complainant_email") == current_user["email"]]
     return sorted(firs, key=lambda x: x.get("created_at", ""), reverse=True)
 
 @router.get("/all")
 async def get_all_firs(current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR, UserRole.COURT))):
-    return ipfs_storage.get_all_firs()
+    return await mongo_storage.get_all_firs()
 
 @router.get("/{fir_id}")
 async def get_fir(fir_id: str, current_user: dict = Depends(get_current_user)):
-    fir = ipfs_storage.get_fir(fir_id)
+    fir = await mongo_storage.get_fir(fir_id)
     if not fir:
         raise HTTPException(status_code=404, detail="FIR not found")
     

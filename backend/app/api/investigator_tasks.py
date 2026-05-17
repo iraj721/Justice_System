@@ -6,7 +6,7 @@ from typing import Optional, List
 import uuid
 from app.core.authz import require_roles
 from app.core.roles import UserRole
-from app.services.ipfs_storage import ipfs_storage
+from app.services.mongo_storage import mongo_storage
 
 router = APIRouter(prefix="/investigator/tasks", tags=["Investigator Tasks"])
 
@@ -25,7 +25,7 @@ class TaskUpdateRequest(BaseModel):
 @router.post("/create")
 async def create_task(payload: TaskCreateRequest, current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
     """Create a new investigation task"""
-    case = ipfs_storage.get_case(payload.case_id)
+    case = await mongo_storage.get_case(payload.case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
@@ -52,35 +52,35 @@ async def create_task(payload: TaskCreateRequest, current_user: dict = Depends(r
     }
     
     # Save task
-    tasks = ipfs_storage.get_case_tasks(payload.case_id)
+    tasks = await mongo_storage.get_case_tasks(payload.case_id)
     tasks[task_id] = task
-    ipfs_storage.save_case_tasks(payload.case_id, tasks)
+    await mongo_storage.save_case_tasks(payload.case_id, tasks)
     
     return task
 
 @router.get("/case/{case_id}")
 async def get_case_tasks(case_id: str, current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
     """Get all tasks for a case"""
-    case = ipfs_storage.get_case(case_id)
+    case = await mongo_storage.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
     if case.get("investigator_email") != current_user["email"]:
         raise HTTPException(status_code=403, detail="Not your case")
     
-    tasks = ipfs_storage.get_case_tasks(case_id)
+    tasks = await mongo_storage.get_case_tasks(case_id)
     return list(tasks.values())
 
 @router.put("/{task_id}/status")
 async def update_task_status(task_id: str, payload: TaskUpdateRequest, current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
     """Update task status"""
     # Find task across all cases
-    all_cases = ipfs_storage.get_all_cases()
+    all_cases = await mongo_storage.get_all_cases()
     found_task = None
     found_case_id = None
     
     for case in all_cases:
-        tasks = ipfs_storage.get_case_tasks(case.get("case_id"))
+        tasks = await mongo_storage.get_case_tasks(case.get("case_id"))
         if task_id in tasks:
             found_task = tasks[task_id]
             found_case_id = case.get("case_id")
@@ -90,7 +90,7 @@ async def update_task_status(task_id: str, payload: TaskUpdateRequest, current_u
         raise HTTPException(status_code=404, detail="Task not found")
     
     # Update task
-    tasks = ipfs_storage.get_case_tasks(found_case_id)
+    tasks = await mongo_storage.get_case_tasks(found_case_id)
     tasks[task_id]["status"] = payload.status
     tasks[task_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
     
@@ -101,19 +101,19 @@ async def update_task_status(task_id: str, payload: TaskUpdateRequest, current_u
             "at": datetime.now(timezone.utc).isoformat()
         })
     
-    ipfs_storage.save_case_tasks(found_case_id, tasks)
+    await mongo_storage.save_case_tasks(found_case_id, tasks)
     
     return {"message": f"Task status updated to {payload.status}", "task": tasks[task_id]}
 
 @router.get("/my-tasks")
 async def get_my_tasks(current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
     """Get all tasks assigned to current investigator"""
-    all_cases = ipfs_storage.get_all_cases()
+    all_cases = await mongo_storage.get_all_cases()
     my_tasks = []
     
     for case in all_cases:
         if case.get("investigator_email") == current_user["email"]:
-            tasks = ipfs_storage.get_case_tasks(case.get("case_id"))
+            tasks = await mongo_storage.get_case_tasks(case.get("case_id"))
             for task in tasks.values():
                 if task.get("assigned_to") == current_user["email"]:
                     my_tasks.append(task)
@@ -123,7 +123,7 @@ async def get_my_tasks(current_user: dict = Depends(require_roles(UserRole.INVES
 @router.get("/stats")
 async def get_task_stats(current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
     """Get task statistics for investigator"""
-    all_cases = ipfs_storage.get_all_cases()
+    all_cases = await mongo_storage.get_all_cases()
     stats = {
         "total": 0,
         "pending": 0,
@@ -139,7 +139,7 @@ async def get_task_stats(current_user: dict = Depends(require_roles(UserRole.INV
     
     for case in all_cases:
         if case.get("investigator_email") == current_user["email"]:
-            tasks = ipfs_storage.get_case_tasks(case.get("case_id"))
+            tasks = await mongo_storage.get_case_tasks(case.get("case_id"))
             for task in tasks.values():
                 stats["total"] += 1
                 status = task.get("status", "PENDING")
@@ -160,20 +160,23 @@ async def get_task_stats(current_user: dict = Depends(require_roles(UserRole.INV
                 
                 # Check overdue
                 if status != "COMPLETED" and task.get("due_date"):
-                    due_date = datetime.fromisoformat(task["due_date"]).date()
-                    if due_date < today:
-                        stats["overdue"] += 1
+                    try:
+                        due_date = datetime.fromisoformat(task["due_date"]).date()
+                        if due_date < today:
+                            stats["overdue"] += 1
+                    except (ValueError, TypeError):
+                        pass
     
     return stats
 
 @router.get("/forensic-status/{case_id}")
 async def get_forensic_status(case_id: str, current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
     """Check if evidence has been accepted by forensic"""
-    case = ipfs_storage.get_case(case_id)
+    case = await mongo_storage.get_case(case_id)
     if not case or case.get("investigator_email") != current_user["email"]:
         raise HTTPException(status_code=403, detail="Access denied")
     
-    all_evidence = ipfs_storage.get_all_evidence()
+    all_evidence = await mongo_storage.get_all_evidence()
     forensic_status = []
     
     for ev in all_evidence:
@@ -201,7 +204,7 @@ async def send_evidence_to_forensic(
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))
 ):
     """Investigator sends evidence to forensic lab"""
-    evidence = ipfs_storage.get_evidence(evidence_id)
+    evidence = await mongo_storage.get_evidence(evidence_id)
     if not evidence:
         raise HTTPException(status_code=404, detail="Evidence not found")
     
@@ -210,6 +213,6 @@ async def send_evidence_to_forensic(
     evidence["transferred_at"] = datetime.now(timezone.utc).isoformat()
     evidence["transferred_by"] = current_user["email"]
     
-    ipfs_storage.save_evidence(evidence_id, evidence)
+    await mongo_storage.save_evidence(evidence_id, evidence)
     
     return {"message": "Evidence sent to forensic lab", "evidence_id": evidence_id}

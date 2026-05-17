@@ -8,6 +8,7 @@ const ROLE_OPTIONS: UserRole[] = [
   "INVESTIGATOR",
   "FORENSIC_ANALYST",
   "COURT",
+  "ADMIN",
 ];
 
 // API URL
@@ -58,6 +59,7 @@ export function RegisterPage() {
     if (form.role === "INVESTIGATOR") return "Enter: POLICE-2026";
     if (form.role === "FORENSIC_ANALYST") return "Enter: LAB-2026";
     if (form.role === "COURT") return "Enter: JUDGE-2026";
+    if (form.role === "ADMIN") return "Enter: ADMIN-2026";
     return "";
   };
 
@@ -67,6 +69,7 @@ export function RegisterPage() {
       case "INVESTIGATOR": return "👮";
       case "FORENSIC_ANALYST": return "🔬";
       case "COURT": return "⚖️";
+      case "ADMIN": return "⚙️";
       default: return "👤";
     }
   };
@@ -77,6 +80,7 @@ export function RegisterPage() {
       case "INVESTIGATOR": return "Manage investigations, gather evidence, and coordinate with forensic labs";
       case "FORENSIC_ANALYST": return "Analyze evidence, generate secure reports with digital signatures";
       case "COURT": return "Review cases, conduct virtual hearings, and deliver judgments";
+      case "ADMIN": return "System administration and user management";
       default: return "Select your role in the justice system";
     }
   };

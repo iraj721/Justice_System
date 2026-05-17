@@ -104,7 +104,7 @@ export function HomePage() {
   const statsData = [
     { value: "24/7", label: "ACCESS", icon: "🕒" },
     { value: "100%", label: "TRACEABLE", icon: "📊" },
-    { value: "IPFS", label: "STORAGE", icon: "💾" },
+    { value: "CLOUD", label: "STORAGE", icon: "💾" },
     { value: "5+", label: "ROLES", icon: "👥" },
   ];
 
@@ -152,7 +152,7 @@ export function HomePage() {
           </div>
           <h1 className="dj-h1">
             Modern Justice
-            <span className="dj-h1-accent">Powered by Blockchain</span>
+            <span className="dj-h1-accent">System</span>
           </h1>
           <p className="dj-hero-desc">
             A precision digital justice ecosystem for citizens, police, forensic labs,

@@ -538,7 +538,8 @@ export function ForensicView(props: ForensicViewProps) {
             <div className="dashboard-sidebar-tip">
               <span>💡</span>
               <span>
-                Evidence is stored on IPFS - Decentralized & Tamper-Proof
+                Evidence is stored on Cloudinary - Secure Cloud Storage with
+                Verification Hashes
               </span>
             </div>
           </div>
@@ -785,8 +786,11 @@ export function ForensicView(props: ForensicViewProps) {
                         </div>
                       </div>
                       <details className="fr-details">
-                        <summary>View IPFS Details</summary>
-                        <code>CID: {selectedAnalysisEvidence.ipfs_cid}</code>
+                        <summary>View Evidence Details</summary>
+                        <code>
+                          Cloudinary URL:{" "}
+                          {selectedAnalysisEvidence.cloudinary_url || "N/A"}
+                        </code>
                         <br />
                         <code>Hash: {selectedAnalysisEvidence.hash}</code>
                       </details>
@@ -1201,8 +1205,14 @@ export function ForensicView(props: ForensicViewProps) {
                           </code>
                         </div>
                         <div>
-                          <span>IPFS CID:</span>{" "}
-                          <code>{verifySelectedEvidence.ipfs_cid}</code>
+                          <span>Cloudinary URL:</span>{" "}
+                          <code>
+                            {verifySelectedEvidence.cloudinary_url?.substring(
+                              0,
+                              50,
+                            )}
+                            ...
+                          </code>
                         </div>
                         <div>
                           <span>Status:</span> {verifySelectedEvidence.status}
@@ -1473,10 +1483,16 @@ export function ForensicView(props: ForensicViewProps) {
                 </div>
 
                 <details className="fr-details">
-                  <summary>IPFS Details</summary>
-                  <code>CID: {selectedReport.ipfs_cid}</code>
-                  <br />
+                  <summary>Document Details</summary>
                   <code>Hash: {selectedReport.hash}</code>
+                  {selectedReport.cloudinary_url && (
+                    <>
+                      <br />
+                      <code>
+                        Cloudinary URL: {selectedReport.cloudinary_url}
+                      </code>
+                    </>
+                  )}
                 </details>
               </div>
             </div>

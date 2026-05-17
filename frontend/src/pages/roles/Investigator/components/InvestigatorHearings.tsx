@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiRequest } from "../../../../shared/services/apiClient";
+import { API_BASE_URL } from "../../../../shared/env";
 
 type Hearing = {
   hearing_id: string;
@@ -36,7 +37,7 @@ export function InvestigatorHearings({ token }: { token: string }) {
       const myHeaders = new Headers();
       myHeaders.append("Authorization", `Bearer ${token}`);
 
-      const response = await fetch("http://127.0.0.1:8000/cases/my-hearings", {
+      const response = await fetch(`${API_BASE_URL}/cases/my-hearings`, {
         method: "GET",
         headers: myHeaders,
         cache: "no-cache",

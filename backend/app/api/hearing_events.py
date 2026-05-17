@@ -6,7 +6,7 @@ from typing import Optional
 import uuid
 from app.core.authz import get_current_user, require_roles
 from app.core.roles import UserRole
-from app.services.ipfs_storage import ipfs_storage
+from app.services.mongo_storage import mongo_storage
 
 router = APIRouter(prefix="/hearing/events", tags=["Hearing Events"])
 
@@ -24,7 +24,7 @@ class HearingEventResponse(BaseModel):
     timestamp: str
     duration_seconds: Optional[int] = None
 
-# Store active hearing sessions
+# Store active hearing sessions (in-memory, not persistent)
 active_sessions = {}
 
 @router.post("/join/{hearing_id}")
@@ -35,12 +35,12 @@ async def join_hearing(
     """Record when a user joins a hearing"""
     
     # Find hearing
-    all_cases = ipfs_storage.get_all_cases()
+    all_cases = await mongo_storage.get_all_cases()
     found_hearing = None
     found_case = None
     
     for case in all_cases:
-        hearings = ipfs_storage.get_case_hearings(case.get("case_id"))
+        hearings = await mongo_storage.get_case_hearings(case.get("case_id"))
         if hearing_id in hearings:
             found_hearing = hearings[hearing_id]
             found_case = case
@@ -50,7 +50,7 @@ async def join_hearing(
         raise HTTPException(status_code=404, detail="Hearing not found")
     
     # Check authorization
-    fir = ipfs_storage.get_fir(found_case.get("fir_id"))
+    fir = await mongo_storage.get_fir(found_case.get("fir_id"))
     user_email = current_user["email"]
     user_role = current_user["role"]
     user_name = current_user.get("full_name", user_email)
@@ -77,9 +77,9 @@ async def join_hearing(
     }
     
     # Store in hearing events
-    hearing_events = ipfs_storage.get_hearing_events(hearing_id)
+    hearing_events = await mongo_storage.get_hearing_events(hearing_id)
     hearing_events[event_id] = event_data
-    ipfs_storage.save_hearing_events(hearing_id, hearing_events)
+    await mongo_storage.save_hearing_events(hearing_id, hearing_events)
     
     # Track active session for duration calculation
     session_key = f"{hearing_id}_{user_email}"
@@ -105,7 +105,7 @@ async def join_hearing(
         }
     })
     
-    ipfs_storage.save_case(found_case.get("case_id"), found_case)
+    await mongo_storage.save_case(found_case.get("case_id"), found_case)
     
     return {
         "success": True,
@@ -122,12 +122,12 @@ async def leave_hearing(
     """Record when a user leaves a hearing and calculate duration"""
     
     # Find hearing
-    all_cases = ipfs_storage.get_all_cases()
+    all_cases = await mongo_storage.get_all_cases()
     found_hearing = None
     found_case = None
     
     for case in all_cases:
-        hearings = ipfs_storage.get_case_hearings(case.get("case_id"))
+        hearings = await mongo_storage.get_case_hearings(case.get("case_id"))
         if hearing_id in hearings:
             found_hearing = hearings[hearing_id]
             found_case = case
@@ -149,7 +149,8 @@ async def leave_hearing(
         join_dt = datetime.fromisoformat(join_time)
         leave_dt = datetime.now(timezone.utc)
         duration_seconds = int((leave_dt - join_dt).total_seconds())
-        del active_sessions[session_key]
+        if session_key in active_sessions:
+            del active_sessions[session_key]
     
     # Record leave event
     event_id = f"HEVT-{uuid.uuid4().hex[:8].upper()}"
@@ -166,9 +167,9 @@ async def leave_hearing(
         "duration_seconds": duration_seconds
     }
     
-    hearing_events = ipfs_storage.get_hearing_events(hearing_id)
+    hearing_events = await mongo_storage.get_hearing_events(hearing_id)
     hearing_events[event_id] = event_data
-    ipfs_storage.save_hearing_events(hearing_id, hearing_events)
+    await mongo_storage.save_hearing_events(hearing_id, hearing_events)
     
     # Format duration for display
     duration_text = ""
@@ -201,7 +202,7 @@ async def leave_hearing(
         }
     })
     
-    ipfs_storage.save_case(found_case.get("case_id"), found_case)
+    await mongo_storage.save_case(found_case.get("case_id"), found_case)
     
     return {
         "success": True,
@@ -219,12 +220,12 @@ async def end_hearing(
     """Court officer ends the hearing (records overall hearing duration)"""
     
     # Find hearing
-    all_cases = ipfs_storage.get_all_cases()
+    all_cases = await mongo_storage.get_all_cases()
     found_hearing = None
     found_case = None
     
     for case in all_cases:
-        hearings = ipfs_storage.get_case_hearings(case.get("case_id"))
+        hearings = await mongo_storage.get_case_hearings(case.get("case_id"))
         if hearing_id in hearings:
             found_hearing = hearings[hearing_id]
             found_case = case
@@ -234,7 +235,7 @@ async def end_hearing(
         raise HTTPException(status_code=404, detail="Hearing not found")
     
     # Get all join/leave events for this hearing
-    hearing_events = ipfs_storage.get_hearing_events(hearing_id)
+    hearing_events = await mongo_storage.get_hearing_events(hearing_id)
     events_list = list(hearing_events.values())
     
     # Calculate total hearing duration
@@ -243,9 +244,15 @@ async def end_hearing(
     
     for event in events_list:
         if event.get("action") == "JOIN":
-            join_times.append(datetime.fromisoformat(event.get("timestamp")))
+            try:
+                join_times.append(datetime.fromisoformat(event.get("timestamp")))
+            except (ValueError, TypeError):
+                pass
         elif event.get("action") == "LEAVE":
-            leave_times.append(datetime.fromisoformat(event.get("timestamp")))
+            try:
+                leave_times.append(datetime.fromisoformat(event.get("timestamp")))
+            except (ValueError, TypeError):
+                pass
     
     # Calculate overall hearing duration (from first join to last leave)
     total_duration = None
@@ -255,12 +262,12 @@ async def end_hearing(
         total_duration = int((last_leave - first_join).total_seconds())
     
     # Update hearing status
-    hearings = ipfs_storage.get_case_hearings(found_case.get("case_id"))
+    hearings = await mongo_storage.get_case_hearings(found_case.get("case_id"))
     hearings[hearing_id]["status"] = "COMPLETED"
     hearings[hearing_id]["ended_at"] = datetime.now(timezone.utc).isoformat()
     if total_duration:
         hearings[hearing_id]["total_duration_seconds"] = total_duration
-    ipfs_storage.save_case_hearings(found_case.get("case_id"), hearings)
+    await mongo_storage.save_case_hearings(found_case.get("case_id"), hearings)
     
     # Format duration
     duration_text = ""
@@ -291,17 +298,17 @@ async def end_hearing(
         "details": {
             "hearing_id": hearing_id,
             "total_duration_seconds": total_duration,
-            "total_participants": len(set([e.get("user_email") for e in events_list]))
+            "total_participants": len(set([e.get("user_email") for e in events_list if e.get("user_email")]))
         }
     })
     
-    ipfs_storage.save_case(found_case.get("case_id"), found_case)
+    await mongo_storage.save_case(found_case.get("case_id"), found_case)
     
     return {
         "success": True,
         "message": f"Hearing {hearing_id} ended",
         "total_duration_seconds": total_duration,
-        "total_participants": len(set([e.get("user_email") for e in events_list]))
+        "total_participants": len(set([e.get("user_email") for e in events_list if e.get("user_email")]))
     }
 
 
@@ -311,7 +318,7 @@ async def get_hearing_events(
     current_user: dict = Depends(get_current_user)
 ):
     """Get all events for a hearing"""
-    hearing_events = ipfs_storage.get_hearing_events(hearing_id)
+    hearing_events = await mongo_storage.get_hearing_events(hearing_id)
     events_list = list(hearing_events.values())
     
     # Sort by timestamp

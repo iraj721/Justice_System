@@ -33,7 +33,7 @@ type Judgment = {
   reasoning: string;
   judge_name: string;
   created_at: string;
-  ipfs_cid: string;
+  cloudinary_url?: string;
   hash: string;
 };
 
@@ -77,6 +77,8 @@ export function CourtView({ token }: { token: string }) {
   const [judgmentSentence, setJudgmentSentence] = useState("");
   const [judgmentReasoning, setJudgmentReasoning] = useState("");
   const [judgmentPunishment, setJudgmentPunishment] = useState("");
+  const [selectedSuspectId, setSelectedSuspectId] = useState("");
+  const [selectedSuspectName, setSelectedSuspectName] = useState("");
 
   // Hearing Form
   const [hearingDate, setHearingDate] = useState("");
@@ -451,11 +453,30 @@ export function CourtView({ token }: { token: string }) {
   }
 
   async function handleDeliverJudgment() {
-    if (!selectedCase || !judgmentVerdict || !judgmentReasoning) {
+    // Validate form
+    if (!selectedCase) {
+      setMessage("❌ No case selected");
+      setTimeout(() => setMessage(""), 3000);
+      return;
+    }
+
+    if (!selectedSuspectId) {
+      setMessage("❌ Please select a suspect/accused person from the list");
+      setTimeout(() => setMessage(""), 3000);
+      return;
+    }
+
+    if (!judgmentVerdict || !judgmentReasoning) {
       setMessage("❌ Please fill verdict and reasoning");
       setTimeout(() => setMessage(""), 3000);
       return;
     }
+
+    // Find the selected suspect details
+    const selectedSuspect = selectedCase.suspects?.find(
+      (s) =>
+        s.id === selectedSuspectId || s.id?.toString() === selectedSuspectId,
+    );
 
     try {
       const result = await apiRequest<any>("/court/judgment", {
@@ -463,6 +484,8 @@ export function CourtView({ token }: { token: string }) {
         token,
         body: {
           case_id: selectedCase.case_id,
+          suspect_id: selectedSuspectId,
+          suspect_name: selectedSuspect?.name || selectedSuspectName,
           verdict: judgmentVerdict,
           sentence: judgmentSentence,
           reasoning: judgmentReasoning,
@@ -470,13 +493,17 @@ export function CourtView({ token }: { token: string }) {
         },
       });
       const judgmentNumber = result?.judgment_number || "Unknown";
-      setMessage(`✅ Judgment delivered! Judgment ID: ${judgmentNumber}`);
+      setMessage(
+        `✅ Judgment delivered for ${selectedSuspect?.name || selectedSuspectName}! Judgment ID: ${judgmentNumber}`,
+      );
       setShowJudgmentModal(false);
       setSelectedCase(null);
       setJudgmentVerdict("");
       setJudgmentSentence("");
       setJudgmentReasoning("");
       setJudgmentPunishment("");
+      setSelectedSuspectId("");
+      setSelectedSuspectName("");
       loadData();
       setTimeout(() => setMessage(""), 5000);
     } catch (err) {
@@ -774,7 +801,7 @@ export function CourtView({ token }: { token: string }) {
           <div className="dashboard-sidebar-footer">
             <div className="dashboard-sidebar-tip">
               <span>💡</span>
-              <span>Decentralized Justice - Blockchain Secured</span>
+              <span>Secure Cloud Storage - Evidence Integrity Verified</span>
             </div>
           </div>
         </aside>
@@ -1450,24 +1477,20 @@ export function CourtView({ token }: { token: string }) {
                                   <button
                                     className="court-btn-small court-btn-primary"
                                     onClick={() => {
-                                      const cid = ev.ipfs_cid;
-                                      // Try multiple gateways, starting with most reliable
-                                      const gateways = [
-                                        `https://ipfs.io/ipfs/${cid}`,
-                                        `https://cloudflare-ipfs.com/ipfs/${cid}`,
-                                        `https://gateway.pinata.cloud/ipfs/${cid}`,
-                                        `https://dweb.link/ipfs/${cid}`,
-                                      ];
-                                      // Open first gateway (ipfs.io is most reliable)
-                                      window.open(gateways[0], "_blank");
-                                      // Log other gateways in console in case first fails
-                                      console.log(
-                                        "If gateway fails, try:",
-                                        gateways.slice(1),
-                                      );
+                                      if (ev.cloudinary_url) {
+                                        window.open(
+                                          ev.cloudinary_url,
+                                          "_blank",
+                                        );
+                                      } else {
+                                        setMessage(
+                                          "❌ No Cloudinary URL available for this evidence",
+                                        );
+                                        setTimeout(() => setMessage(""), 3000);
+                                      }
                                     }}
                                   >
-                                    👁️ View
+                                    👁️ View Evidence
                                   </button>
                                 </div>
                               </div>
@@ -1647,12 +1670,14 @@ export function CourtView({ token }: { token: string }) {
                         </details>
 
                         <details className="court-details">
-                          <summary>🔗 IPFS Details</summary>
+                          <summary>🔗 Document Details</summary>
                           <div className="court-ipfs-details">
-                            <div>
-                              <strong>CID:</strong>{" "}
-                              <code>{judgment.ipfs_cid}</code>
-                            </div>
+                            {judgment.cloudinary_url && (
+                              <div>
+                                <strong>Document URL:</strong>{" "}
+                                <code>{judgment.cloudinary_url}</code>
+                              </div>
+                            )}
                             <div>
                               <strong>Hash:</strong>{" "}
                               <code>{judgment.hash}</code>
@@ -1895,12 +1920,12 @@ export function CourtView({ token }: { token: string }) {
                           {verifySelectedEvidence.hash}
                         </code>
                       </div>
-                      <div>
-                        <strong>IPFS CID:</strong>{" "}
-                        <code className="court-cid">
-                          {verifySelectedEvidence.ipfs_cid}
-                        </code>
-                      </div>
+                      {selectedForensicReport.cloudinary_url && (
+                        <div className="forensic-section">
+                          <strong>Cloudinary URL:</strong>{" "}
+                          <code>{selectedForensicReport.cloudinary_url}</code>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -2081,8 +2106,6 @@ export function CourtView({ token }: { token: string }) {
         />
       )}
 
-      {/* ============ MODALS ============ */}
-
       {/* JUDGMENT MODAL */}
       {showJudgmentModal && selectedCase && (
         <div
@@ -2090,6 +2113,8 @@ export function CourtView({ token }: { token: string }) {
           onClick={() => {
             setShowJudgmentModal(false);
             setSelectedCase(null);
+            setSelectedSuspectId("");
+            setSelectedSuspectName("");
           }}
         >
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -2100,6 +2125,8 @@ export function CourtView({ token }: { token: string }) {
                 onClick={() => {
                   setShowJudgmentModal(false);
                   setSelectedCase(null);
+                  setSelectedSuspectId("");
+                  setSelectedSuspectName("");
                 }}
               >
                 ✕
@@ -2110,6 +2137,60 @@ export function CourtView({ token }: { token: string }) {
                 <strong>Case:</strong> {selectedCase.case_number} -{" "}
                 {selectedCase.title}
               </p>
+
+              {/* ============ SUSPECT DROPDOWN - NEW ============ */}
+              <div className="form-group">
+                <label>👤 Select Accused/Suspect Person *</label>
+                <select
+                  value={selectedSuspectId}
+                  onChange={(e) => {
+                    const suspectId = e.target.value;
+                    setSelectedSuspectId(suspectId);
+                    const suspect = selectedCase.suspects?.find(
+                      (s) =>
+                        s.id === suspectId || s.id?.toString() === suspectId,
+                    );
+                    if (suspect) {
+                      setSelectedSuspectName(suspect.name);
+                    }
+                  }}
+                  className="court-select-custom"
+                  style={{
+                    width: "100%",
+                    padding: "12px",
+                    marginBottom: "16px",
+                  }}
+                >
+                  <option value="">-- Select Accused Person --</option>
+                  {selectedCase.suspects && selectedCase.suspects.length > 0 ? (
+                    selectedCase.suspects.map((suspect, idx) => (
+                      <option key={suspect.id || idx} value={suspect.id || idx}>
+                        👤 {suspect.name} -{" "}
+                        {suspect.description?.substring(0, 50) ||
+                          "No description"}
+                      </option>
+                    ))
+                  ) : (
+                    <option disabled>No suspects added to this case</option>
+                  )}
+                </select>
+                {selectedCase.suspects &&
+                  selectedCase.suspects.length === 0 && (
+                    <p
+                      className="warning-text"
+                      style={{
+                        fontSize: "0.7rem",
+                        marginTop: "8px",
+                        color: "#f59e0b",
+                      }}
+                    >
+                      ⚠️ No suspects have been added to this case yet. Judgment
+                      cannot be delivered without selecting an accused person.
+                    </p>
+                  )}
+              </div>
+              {/* ============ END SUSPECT DROPDOWN ============ */}
+
               <div className="form-group">
                 <label>Verdict *</label>
                 <select
@@ -2117,10 +2198,10 @@ export function CourtView({ token }: { token: string }) {
                   onChange={(e) => setJudgmentVerdict(e.target.value)}
                 >
                   <option value="">-- Select Verdict --</option>
-                  <option value="GUILTY">GUILTY</option>
-                  <option value="NOT_GUILTY">NOT GUILTY</option>
-                  <option value="ACQUITTED">ACQUITTED</option>
-                  <option value="CONVICTED">CONVICTED</option>
+                  <option value="GUILTY">🔴 GUILTY</option>
+                  <option value="NOT_GUILTY">🟢 NOT GUILTY</option>
+                  <option value="ACQUITTED">🔵 ACQUITTED</option>
+                  <option value="CONVICTED">⚫ CONVICTED</option>
                 </select>
               </div>
               <div className="form-group">
@@ -2156,6 +2237,8 @@ export function CourtView({ token }: { token: string }) {
                 onClick={() => {
                   setShowJudgmentModal(false);
                   setSelectedCase(null);
+                  setSelectedSuspectId("");
+                  setSelectedSuspectName("");
                 }}
               >
                 Cancel
@@ -2163,6 +2246,9 @@ export function CourtView({ token }: { token: string }) {
               <button
                 className="court-btn court-btn-danger"
                 onClick={handleDeliverJudgment}
+                disabled={
+                  !selectedSuspectId || !judgmentVerdict || !judgmentReasoning
+                }
               >
                 ⚖️ Deliver Judgment
               </button>
@@ -2397,11 +2483,13 @@ export function CourtView({ token }: { token: string }) {
                   </div>
                 </div>
                 <details className="forensic-details">
-                  <summary>🔗 IPFS Details</summary>
-                  <div>
-                    <strong>CID:</strong>{" "}
-                    <code>{selectedForensicReport.ipfs_cid}</code>
-                  </div>
+                  <summary>🔗 Document Details</summary>
+                  {selectedForensicReport.cloudinary_url && (
+                    <div>
+                      <strong>Cloudinary URL:</strong>{" "}
+                      <code>{selectedForensicReport.cloudinary_url}</code>
+                    </div>
+                  )}
                   <div>
                     <strong>Hash:</strong>{" "}
                     <code>{selectedForensicReport.hash}</code>

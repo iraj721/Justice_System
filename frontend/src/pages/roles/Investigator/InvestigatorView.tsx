@@ -2,7 +2,6 @@
 import { useEffect, useState, useRef } from "react";
 import { apiRequest } from "../../../shared/services/apiClient";
 import { API_BASE_URL } from "../../../shared/env";
-import { uploadFileToIPFS } from "../../../shared/services/ipfs";
 import { TaskManager } from "./components/TaskManager";
 import { StatsDashboard } from "./components/StatsDashboard";
 import { CommunicationPanel } from "./components/CommunicationPanel";
@@ -57,12 +56,13 @@ type VerificationResult = {
   evidence_title?: string;
   uploaded_file_name?: string;
   stored_cid?: string;
+  cloudinary_url?: string;
 };
 
 type EvidenceResponse = {
   evidence_id: string;
   hash: string;
-  ipfs_cid: string;
+  cloudinary_url: string;
   title: string;
   case_id: string;
   status: string;
@@ -74,7 +74,7 @@ type CaseEvidence = {
   evidence_id: string;
   title: string;
   hash: string;
-  ipfs_cid: string;
+  cloudinary_url: string;
   status: string;
   created_at: string;
 };
@@ -195,6 +195,9 @@ export function InvestigatorView({
   const [selectedCaseForEvidence, setSelectedCaseForEvidence] =
     useState<any>(null);
   const [selectedTimelineCase, setSelectedTimelineCase] = useState<any>(null);
+  // FIR Details Modal State
+  const [showFirDetailModal, setShowFirDetailModal] = useState(false);
+  const [selectedFirDetail, setSelectedFirDetail] = useState<any>(null);
 
   // Document Review Modal States
   const [showReviewModal, setShowReviewModal] = useState(false);
@@ -267,9 +270,7 @@ export function InvestigatorView({
     if (pendingFirs.length > previousPendingCount && previousPendingCount > 0) {
       const newCount = pendingFirs.length - previousPendingCount;
       setNewFirNotification(`🔔 ${newCount} new FIR(s) received!`);
-      showToast(
-        `🔔 ${newCount} new FIR(s) received! Please check Pending FIRs tab.`,
-      );
+      showToast(`🔔 ${newCount} new FIR(s)!`, "info");
       setTimeout(() => {
         setNewFirNotification(null);
       }, 8000);
@@ -292,10 +293,13 @@ export function InvestigatorView({
     try {
       const [court, forensic] = await Promise.all([
         apiRequest<User[]>("/admin/users/by-role/COURT", { token }),
-        apiRequest<User[]>("/admin/users/by-role/FORENSIC_ANALYST", { token }),
+        apiRequest<User[]>("/admin/users/by-role/FORENSIC_ANALYST/public", {
+          token,
+        }),
       ]);
       setCourtUsers(court);
       setForensicUsers(forensic);
+      console.log("Forensic users loaded:", forensic);
     } catch (err) {
       console.error("Error loading users:", err);
     }
@@ -397,15 +401,14 @@ export function InvestigatorView({
   async function viewFirDetails(firId: string) {
     setLoading(true);
     try {
-      const response = await apiRequest<{ fir: FIRDetail }>(
+      const response = await apiRequest<{ fir: any }>(
         `/admin/fir-details/${firId}`,
         { token },
       );
-      setSelectedFirDetails(response.fir);
-      setActiveTab("firDetails");
-      setSidebarOpen(false);
+      setSelectedFirDetail(response.fir);
+      setShowFirDetailModal(true);
     } catch (err) {
-      showToast("❌ Failed to load FIR details");
+      showToast("❌ Failed to load FIR details", "error");
     } finally {
       setLoading(false);
     }
@@ -571,6 +574,7 @@ export function InvestigatorView({
         evidence_title: result.evidence_title,
         uploaded_file_name: result.uploaded_file_name,
         stored_cid: result.stored_cid,
+        cloudinary_url: result.cloudinary_url,
       });
     } catch (err) {
       setVerifyResult({
@@ -670,11 +674,7 @@ export function InvestigatorView({
       await loadPendingFirs();
       await loadAcceptedFirs();
       await onRefresh();
-      showToast(
-        response.case
-          ? `✅ FIR ${status}! Case ${response.case.case_number} has been auto-created.`
-          : `✅ FIR ${status} successfully!`,
-      );
+      showToast(`✅ FIR ${status}!`, "success");
     } catch (err) {
       showToast("❌ Failed to update status", "error");
     } finally {
@@ -699,7 +699,7 @@ export function InvestigatorView({
           priority: "MEDIUM",
         },
       });
-      showToast("✅ Case created successfully!");
+      showToast("✅ Case created successfully!", "success");
       setCaseFirId("");
       setCaseTitle("");
       setCaseDescription("");
@@ -747,10 +747,37 @@ export function InvestigatorView({
       const progressInterval = setInterval(() => {
         setUploadProgress((prev) => Math.min(prev + 20, 90));
       }, 200);
-      showToast("📤 Calculating hash & uploading to IPFS...");
-      const { cid, hash } = await uploadFileToIPFS(selectedFile, token);
+
+      showToast("📤 Uploading to Cloudinary...");
+
+      // Upload to Cloudinary via backend
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+      formData.append("title", evidenceTitle);
+      formData.append("description", evidenceDescription || "");
+      formData.append("case_id", selectedCase.case_id);
+
+      const uploadResponse = await fetch(
+        `${API_BASE_URL}/cases/evidence/upload-file`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          body: formData,
+        },
+      );
+
+      if (!uploadResponse.ok) {
+        const error = await uploadResponse.json();
+        throw new Error(error.detail || "Upload failed");
+      }
+
+      const uploadResult = await uploadResponse.json();
       clearInterval(progressInterval);
       setUploadProgress(100);
+
+      // Save evidence to database
       const response = await apiRequest<EvidenceResponse>("/cases/evidence", {
         method: "POST",
         token,
@@ -758,23 +785,28 @@ export function InvestigatorView({
           case_id: selectedCase.case_id,
           title: evidenceTitle,
           description: evidenceDescription,
-          ipfs_cid: cid,
-          file_hash: hash,
+          cloudinary_url: uploadResult.cloudinary_url,
+          file_hash: uploadResult.hash,
         },
       });
+
       setEvidenceTitle("");
       setEvidenceDescription("");
       setSelectedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
       await onRefresh();
-      showToast(
-        `✅ Evidence "${evidenceTitle}" added successfully!\n\n📋 Evidence ID: ${response.evidence_id}\n🔗 IPFS CID: ${cid}\n🔑 Hash: ${hash}\n💾 SAVE THESE VALUES!`,
-      );
+      showToast(`✅ Evidence added!`, "success");
+      console.log("Evidence details:", {
+        evidence_id: response.evidence_id,
+        hash: uploadResult.hash,
+        url: uploadResult.cloudinary_url,
+      });
     } catch (err) {
       console.error("Upload error:", err);
       showToast(
         "❌ Upload failed: " +
           (err instanceof Error ? err.message : "Unknown error"),
+        "error",
       );
     } finally {
       setIsUploading(false);
@@ -785,7 +817,7 @@ export function InvestigatorView({
   function selectEvidenceForVerification(
     evidenceId: string,
     hash: string,
-    ipfsCid: string,
+    cloudinaryUrl: string,
   ) {
     const ev = evidence.find((e: any) => e.evidence_id === evidenceId);
     if (ev) {
@@ -797,7 +829,7 @@ export function InvestigatorView({
             evidence_id: evidenceId,
             title: ev.title,
             hash: hash,
-            ipfs_cid: ipfsCid,
+            cloudinary_url: cloudinaryUrl,
             status: ev.status,
             created_at: ev.created_at,
           });
@@ -894,18 +926,12 @@ export function InvestigatorView({
     }
   }
 
-  function viewEvidenceOnIPFSMultiGateway(cid: string) {
-    const gateways = [
-      `http://localhost:808O/ipfs/${cid}`,
-      `https://ipfs.io/ipfs/${cid}`,
-      `https://gateway.pinata.cloud/ipfs/${cid}`,
-      `https://dweb.link/ipfs/${cid}`,
-    ];
-
-    // Try local gateway first
-    window.open(gateways[0], "_blank");
-
-    console.log("If gateway fails, try:", gateways);
+  function viewEvidenceOnCloudinary(url: string) {
+    if (url) {
+      window.open(url, "_blank");
+    } else {
+      showToast("❌ No Cloudinary URL available for this evidence", "error");
+    }
   }
 
   function getStatusBadge(status: string) {
@@ -1081,7 +1107,8 @@ export function InvestigatorView({
             <div className="dashboard-sidebar-tip">
               <span>💡</span>
               <span>
-                Evidence is stored on IPFS - Decentralized & Tamper-Proof
+                Evidence is stored on Cloudinary - Secure Cloud Storage with
+                Verification Hashes
               </span>
             </div>
           </div>
@@ -1149,6 +1176,7 @@ export function InvestigatorView({
             </div>
           </div>
 
+          {/* Message Toast - IMPROVED POSITIONING */}
           {toastMessage && (
             <div className={`dashboard-toast toast-${toastMessage.type}`}>
               <div className="toast-inner">
@@ -1218,7 +1246,9 @@ export function InvestigatorView({
                         <div>
                           <strong>{e.title}</strong>
                           <br />
-                          <small>CID: {e.ipfs_cid?.substring(0, 20)}...</small>
+                          <small>
+                            Cloudinary: {e.cloudinary_url?.substring(0, 30)}...
+                          </small>
                         </div>
                         {getStatusBadge(e.status)}
                       </div>
@@ -1236,7 +1266,6 @@ export function InvestigatorView({
             <FeedbackPanel token={token} cases={cases} />
           )}
 
-          {/* Pending FIRs Tab */}
           {activeTab === "pending" && (
             <div className="dashboard-content-section fade-up">
               <div className="section-header">
@@ -1274,10 +1303,19 @@ export function InvestigatorView({
                         </p>
                         <p>
                           <strong>📝 Description:</strong>{" "}
-                          {fir.incident_description?.substring(0, 150)}...
+                          {fir.incident_description?.substring(0, 100)}...
                         </p>
                       </div>
+
+                      {/* ============ NEW: VIEW DETAILS BUTTON ============ */}
                       <div className="fir-actions">
+                        <button
+                          className="btn btn-info"
+                          onClick={() => viewFirDetails(fir.fir_id)}
+                          style={{ background: "#3b82f6", color: "white" }}
+                        >
+                          👁️ View Full Details
+                        </button>
                         <button
                           className="btn btn-success"
                           onClick={() =>
@@ -1304,6 +1342,7 @@ export function InvestigatorView({
                           ❌ Reject FIR
                         </button>
                       </div>
+                      {/* ============ END NEW BUTTON ============ */}
                     </div>
                   ))}
                 </div>
@@ -1661,7 +1700,7 @@ export function InvestigatorView({
                             <tr>
                               <th>EVIDENCE</th>
                               <th>TITLE</th>
-                              <th>IPFS CID</th>
+                              <th>CLOUDINARY URL</th>
                               <th>STATUS</th>
                               <th>VERIFIED</th>
                               <th>ACTIONS</th>
@@ -1679,7 +1718,9 @@ export function InvestigatorView({
                                 </td>
                                 <td>{e.evidence_id?.substring(0, 8)}...</td>
                                 <td>
-                                  <code>{e.ipfs_cid?.substring(0, 20)}...</code>
+                                  <code>
+                                    {e.cloudinary_url?.substring(0, 30)}...
+                                  </code>
                                 </td>
                                 <td>{getStatusBadge(e.status)}</td>
                                 <td>
@@ -1705,8 +1746,8 @@ export function InvestigatorView({
                                     <button
                                       className="icon-btn"
                                       onClick={() =>
-                                        viewEvidenceOnIPFSMultiGateway(
-                                          e.ipfs_cid,
+                                        viewEvidenceOnCloudinary(
+                                          e.cloudinary_url,
                                         )
                                       }
                                       title="View"
@@ -1719,7 +1760,7 @@ export function InvestigatorView({
                                         selectEvidenceForVerification(
                                           e.evidence_id,
                                           e.hash,
-                                          e.ipfs_cid,
+                                          e.cloudinary_url,
                                         )
                                       }
                                       title="Verify"
@@ -1757,8 +1798,11 @@ export function InvestigatorView({
           {activeTab === "upload" && (
             <div className="dashboard-content-section fade-up">
               <div className="section-header">
-                <h2>📤 Upload Evidence to IPFS</h2>
-                <p>Evidence is stored on IPFS - Decentralized & Tamper-Proof</p>
+                <h2>📤 Upload Evidence to Cloudinary</h2>
+                <p>
+                  Evidence is stored on Cloudinary - Secure Cloud Storage with
+                  Verification Hashes
+                </p>
               </div>
               <div className="form-card">
                 <div className="form-group">
@@ -1831,7 +1875,7 @@ export function InvestigatorView({
                     !selectedFile
                   }
                 >
-                  {isUploading ? "Uploading..." : "Upload to IPFS"}
+                  {isUploading ? "Uploading..." : "Upload to Cloudinary"}
                 </button>
               </div>
             </div>
@@ -1927,8 +1971,14 @@ export function InvestigatorView({
                         {selectedEvidenceForVerify.title}
                       </p>
                       <p>
-                        <strong>IPFS CID:</strong>{" "}
-                        <code>{selectedEvidenceForVerify.ipfs_cid}</code>
+                        <strong>Cloudinary URL:</strong>{" "}
+                        <code>
+                          {selectedEvidenceForVerify.cloudinary_url?.substring(
+                            0,
+                            50,
+                          )}
+                          ...
+                        </code>
                       </p>
                       <p>
                         <strong>Stored Hash:</strong>{" "}
@@ -2307,7 +2357,7 @@ export function InvestigatorView({
                         <thead>
                           <tr>
                             <th>Title</th>
-                            <th>IPFS CID</th>
+                            <th>Cloudinary URL</th>
                             <th>Status</th>
                             <th>Collected By</th>
                             <th>Collected On</th>
@@ -2320,7 +2370,9 @@ export function InvestigatorView({
                               <tr key={idx}>
                                 <td>{e.title || "N/A"}</td>
                                 <td>
-                                  <code>{e.ipfs_cid?.substring(0, 20)}...</code>
+                                  <code>
+                                    {e.cloudinary_url?.substring(0, 30)}...
+                                  </code>
                                 </td>
                                 <td>
                                   {getStatusBadge(e.status || "COLLECTED")}
@@ -2640,7 +2692,8 @@ export function InvestigatorView({
                             <strong>{e.title}</strong> - Status: {e.status}
                             <br />
                             <small>
-                              CID: {e.ipfs_cid?.substring(0, 20)}...
+                              Cloudinary: {e.cloudinary_url?.substring(0, 30)}
+                              ...
                             </small>
                           </label>
                         ))}
@@ -2763,9 +2816,9 @@ export function InvestigatorView({
                           <strong>Description:</strong> {doc.description}
                         </p>
                         <p>
-                          <strong>IPFS CID:</strong>{" "}
+                          <strong>Cloudinary URL:</strong>{" "}
                           <code className="doc-cid-preview">
-                            {doc.ipfs_cid?.substring(0, 30)}...
+                            {doc.cloudinary_url?.substring(0, 50)}...
                           </code>
                         </p>
                         <p>
@@ -2801,18 +2854,12 @@ export function InvestigatorView({
                         <button
                           className="btn btn-primary"
                           onClick={() => {
-                            const cid = doc.ipfs_cid;
-                            const gateways = [
-                              `http://127.0.0.1:8081/ipfs/${cid}`, // Local IPFS gateway
-                              `https://ipfs.io/ipfs/${cid}`,
-                              `https://gateway.pinata.cloud/ipfs/${cid}`,
-                              `https://dweb.link/ipfs/${cid}`,
-                              `https://cloudflare-ipfs.com/ipfs/${cid}`,
-                            ];
-                            // Try local gateway first
-                            window.open(gateways[0], "_blank");
-                            // If it fails, user can try others manually
-                            console.log("If gateway fails, try:", gateways);
+                            const url = doc.cloudinary_url;
+                            if (url) {
+                              window.open(url, "_blank");
+                            } else {
+                              showToast("No Cloudinary URL available", "error");
+                            }
                           }}
                         >
                           👁️ View Document
@@ -2946,13 +2993,13 @@ export function InvestigatorView({
                     </div>
                   )}
 
-                  {/* IPFS Details */}
+                  {/* Cloudinary Details */}
                   <div className="review-section">
-                    <label>🔗 IPFS Details</label>
+                    <label>🔗 Cloudinary Details</label>
                     <div className="review-ipfs-details">
                       <div>
-                        <strong>CID:</strong>{" "}
-                        <code>{reviewingDocument.ipfs_cid}</code>
+                        <strong>Cloudinary URL:</strong>{" "}
+                        <code>{reviewingDocument.cloudinary_url}</code>
                       </div>
                       <div>
                         <strong>Hash:</strong>{" "}
@@ -3023,6 +3070,196 @@ export function InvestigatorView({
               </div>
             </div>
           )}
+          {/* FIR DETAILS MODAL */}
+          {showFirDetailModal && selectedFirDetail && (
+            <div
+              className="modal-overlay"
+              onClick={() => setShowFirDetailModal(false)}
+            >
+              <div
+                className="modal modal-large"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="modal-header">
+                  <div className="modal-header-left">
+                    <div className="modal-icon">📋</div>
+                    <div>
+                      <h3>FIR Details: {selectedFirDetail.fir_number}</h3>
+                      <p>Complete information about the complaint</p>
+                    </div>
+                  </div>
+                  <button
+                    className="modal-close"
+                    onClick={() => setShowFirDetailModal(false)}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="modal-body">
+                  {/* FIR Information */}
+                  <div className="details-section">
+                    <h4>📌 FIR Information</h4>
+                    <div className="details-grid">
+                      <div>
+                        <strong>FIR Number:</strong>{" "}
+                        {selectedFirDetail.fir_number}
+                      </div>
+                      <div>
+                        <strong>Status:</strong>{" "}
+                        {getStatusBadge(selectedFirDetail.status)}
+                      </div>
+                      <div>
+                        <strong>Filed On:</strong>{" "}
+                        {new Date(
+                          selectedFirDetail.created_at,
+                        ).toLocaleString()}
+                      </div>
+                      <div>
+                        <strong>FIR ID:</strong>{" "}
+                        <code>{selectedFirDetail.fir_id}</code>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Complainant Details */}
+                  <div className="details-section">
+                    <h4>👤 Complainant Details</h4>
+                    <div className="details-grid">
+                      <div>
+                        <strong>Name:</strong>{" "}
+                        {selectedFirDetail.complainant_name}
+                      </div>
+                      <div>
+                        <strong>Contact:</strong>{" "}
+                        {selectedFirDetail.complainant_contact}
+                      </div>
+                      <div>
+                        <strong>Email:</strong>{" "}
+                        {selectedFirDetail.complainant_email}
+                      </div>
+                      <div>
+                        <strong>Address:</strong>{" "}
+                        {selectedFirDetail.complainant_address ||
+                          "Not provided"}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Incident Details */}
+                  <div className="details-section">
+                    <h4>📍 Incident Details</h4>
+                    <div className="details-grid">
+                      <div className="full-width">
+                        <strong>Title:</strong>{" "}
+                        {selectedFirDetail.incident_title}
+                      </div>
+                      <div className="full-width">
+                        <strong>Description:</strong>{" "}
+                        {selectedFirDetail.incident_description}
+                      </div>
+                      <div>
+                        <strong>Location:</strong>{" "}
+                        {selectedFirDetail.incident_location}
+                      </div>
+                      <div>
+                        <strong>Date & Time:</strong>{" "}
+                        {new Date(
+                          selectedFirDetail.incident_datetime,
+                        ).toLocaleString()}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Suspect Information */}
+                  <div className="details-section">
+                    <h4>👮 Suspect Information</h4>
+                    <div className="details-grid">
+                      <div>
+                        <strong>Name:</strong>{" "}
+                        {selectedFirDetail.accused_person || "Not provided"}
+                      </div>
+                      <div>
+                        <strong>Description:</strong>{" "}
+                        {selectedFirDetail.accused_description ||
+                          "Not provided"}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Witness Information */}
+                  <div className="details-section">
+                    <h4>👥 Witness Information</h4>
+                    <div className="details-grid">
+                      <div>
+                        <strong>Names:</strong>{" "}
+                        {selectedFirDetail.witness_names || "Not provided"}
+                      </div>
+                      <div>
+                        <strong>Contact:</strong>{" "}
+                        {selectedFirDetail.witness_contact || "Not provided"}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Status History */}
+                  {selectedFirDetail.status_history &&
+                    selectedFirDetail.status_history.length > 0 && (
+                      <div className="details-section">
+                        <h4>📜 Status History</h4>
+                        <div className="timeline-list">
+                          {selectedFirDetail.status_history.map(
+                            (history: any, idx: number) => (
+                              <div key={idx} className="timeline-item">
+                                <div className="timeline-dot"></div>
+                                <div className="timeline-content">
+                                  <div className="timeline-header">
+                                    <strong>
+                                      {history.status.replace(/_/g, " ")}
+                                    </strong>
+                                    <span className="timeline-date">
+                                      {new Date(
+                                        history.timestamp,
+                                      ).toLocaleString()}
+                                    </span>
+                                  </div>
+                                  {history.remarks && (
+                                    <div className="timeline-remarks">
+                                      {history.remarks}
+                                    </div>
+                                  )}
+                                  <div className="timeline-by">
+                                    By: {history.changed_by || "System"}
+                                  </div>
+                                </div>
+                              </div>
+                            ),
+                          )}
+                        </div>
+                      </div>
+                    )}
+                </div>
+
+                <div className="modal-footer">
+                  <button
+                    className="btn-secondary"
+                    onClick={() => setShowFirDetailModal(false)}
+                  >
+                    Close
+                  </button>
+                  <button
+                    className="btn-primary"
+                    onClick={() => {
+                      setShowFirDetailModal(false);
+                      // Auto-fill accept or review action
+                    }}
+                  >
+                    Take Action →
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </main>
       </div>
 
@@ -3062,6 +3299,171 @@ export function InvestigatorView({
           ))}
         </div>
       </div>
+      {/* FIR DETAILS MODAL */}
+      {showFirDetailModal && selectedFirDetail && (
+        <div
+          className="modal-overlay"
+          onClick={() => setShowFirDetailModal(false)}
+        >
+          <div
+            className="modal modal-large"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h3>📋 FIR Details: {selectedFirDetail.fir_number}</h3>
+              <button
+                className="modal-close"
+                onClick={() => setShowFirDetailModal(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="modal-body">
+              {/* FIR Information */}
+              <div className="details-section">
+                <h4>FIR Information</h4>
+                <div className="details-grid">
+                  <div>
+                    <strong>FIR Number:</strong> {selectedFirDetail.fir_number}
+                  </div>
+                  <div>
+                    <strong>Status:</strong>{" "}
+                    {getStatusBadge(selectedFirDetail.status)}
+                  </div>
+                  <div>
+                    <strong>Filed On:</strong>{" "}
+                    {new Date(selectedFirDetail.created_at).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+
+              {/* Complainant Details */}
+              <div className="details-section">
+                <h4>👤 Complainant Details</h4>
+                <div className="details-grid">
+                  <div>
+                    <strong>Name:</strong> {selectedFirDetail.complainant_name}
+                  </div>
+                  <div>
+                    <strong>Contact:</strong>{" "}
+                    {selectedFirDetail.complainant_contact}
+                  </div>
+                  <div>
+                    <strong>Email:</strong>{" "}
+                    {selectedFirDetail.complainant_email}
+                  </div>
+                  <div>
+                    <strong>Address:</strong>{" "}
+                    {selectedFirDetail.complainant_address || "Not provided"}
+                  </div>
+                </div>
+              </div>
+
+              {/* Incident Details */}
+              <div className="details-section">
+                <h4>📌 Incident Details</h4>
+                <div className="details-grid">
+                  <div>
+                    <strong>Title:</strong> {selectedFirDetail.incident_title}
+                  </div>
+                  <div>
+                    <strong>Description:</strong>{" "}
+                    {selectedFirDetail.incident_description}
+                  </div>
+                  <div>
+                    <strong>Location:</strong>{" "}
+                    {selectedFirDetail.incident_location}
+                  </div>
+                  <div>
+                    <strong>Date & Time:</strong>{" "}
+                    {new Date(
+                      selectedFirDetail.incident_datetime,
+                    ).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+
+              {/* Suspect Information */}
+              <div className="details-section">
+                <h4>👮 Suspect Information</h4>
+                <div className="details-grid">
+                  <div>
+                    <strong>Name:</strong>{" "}
+                    {selectedFirDetail.accused_person || "Not provided"}
+                  </div>
+                  <div>
+                    <strong>Description:</strong>{" "}
+                    {selectedFirDetail.accused_description || "Not provided"}
+                  </div>
+                </div>
+              </div>
+
+              {/* Witness Information */}
+              <div className="details-section">
+                <h4>👥 Witness Information</h4>
+                <div className="details-grid">
+                  <div>
+                    <strong>Names:</strong>{" "}
+                    {selectedFirDetail.witness_names || "Not provided"}
+                  </div>
+                  <div>
+                    <strong>Contact:</strong>{" "}
+                    {selectedFirDetail.witness_contact || "Not provided"}
+                  </div>
+                </div>
+              </div>
+
+              {/* Status History */}
+              {selectedFirDetail.status_history &&
+                selectedFirDetail.status_history.length > 0 && (
+                  <div className="details-section">
+                    <h4>📜 Status History</h4>
+                    <div className="timeline-list">
+                      {selectedFirDetail.status_history.map(
+                        (history: any, idx: number) => (
+                          <div key={idx} className="timeline-item">
+                            <div className="timeline-dot"></div>
+                            <div>
+                              <strong>
+                                {history.status.replace(/_/g, " ")}
+                              </strong>
+                              <div className="timeline-meta">
+                                {new Date(history.timestamp).toLocaleString()} -
+                                By: {history.changed_by || "System"}
+                              </div>
+                              {history.remarks && (
+                                <div className="timeline-remarks">
+                                  {history.remarks}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ),
+                      )}
+                    </div>
+                  </div>
+                )}
+            </div>
+            <div className="modal-footer">
+              <button
+                className="btn-secondary"
+                onClick={() => setShowFirDetailModal(false)}
+              >
+                Close
+              </button>
+              <button
+                className="btn-primary"
+                onClick={() => {
+                  setShowFirDetailModal(false);
+                  // Optional: Auto-fill accept/reject
+                }}
+              >
+                Take Action →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {sidebarOpen && (
         <div
           className="mobile-menu-overlay"
@@ -3756,31 +4158,99 @@ export function InvestigatorView({
           color: #7a849c;
           margin-top: 4px;
         }
+          /* Small Toast Notification - Fixed Position & Responsive */
+.dashboard-toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 9999;
+  background: rgba(12, 15, 26, 0.95);
+  backdrop-filter: blur(12px);
+  border-radius: 8px;
+  padding: 10px 16px;
+  min-width: 200px;
+  max-width: 280px;
+  animation: slideInRight 0.3s ease-out;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  border-left: 3px solid;
+}
 
-        /* Toast */
-        .dashboard-toast {
-          position: fixed;
-          bottom: 80px;
-          right: 20px;
-          z-index: 200;
-          padding: 12px 20px;
-          background: rgba(12, 15, 26, 0.95);
-          backdrop-filter: blur(12px);
-          border-radius: 8px;
-          font-size: 0.85rem;
-          animation: slideInRight 0.3s ease-out;
-        }
+.toast-success {
+  border-left-color: #10b981;
+}
+.toast-success .toast-icon {
+  color: #10b981;
+}
 
-        .toast-success {
-          border: 1px solid rgba(16, 185, 129, 0.4);
-          color: #10b981;
-        }
+.toast-error {
+  border-left-color: #ef4444;
+}
+.toast-error .toast-icon {
+  color: #ef4444;
+}
 
-        .toast-error {
-          border: 1px solid rgba(239, 68, 68, 0.4);
-          color: #f87171;
-        }
+.toast-info {
+  border-left-color: #6366f1;
+}
+.toast-info .toast-icon {
+  color: #818cf8;
+}
 
+.toast-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.toast-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.toast-text {
+  font-size: 0.75rem;
+  color: #e8ecf8;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Mobile responsive - bottom center */
+@media (max-width: 768px) {
+  .dashboard-toast {
+    bottom: 70px;
+    right: 16px;
+    left: auto;
+    max-width: 260px;
+  }
+}
+
+@media (max-width: 480px) {
+  .dashboard-toast {
+    bottom: 65px;
+    right: 12px;
+    padding: 8px 12px;
+    max-width: 220px;
+  }
+  
+  .toast-text {
+    font-size: 0.7rem;
+  }
+  
+  .toast-icon {
+    font-size: 0.85rem;
+  }
+}
         /* Header */
         .dashboard-header {
           padding: 2rem 2rem 0 2rem;
@@ -3940,480 +4410,480 @@ export function InvestigatorView({
         }
 
         /* FIR Card */
-        .fir-card {
-          background: rgba(7, 9, 14, 0.5);
-          border: 1px solid rgba(99, 102, 241, 0.12);
-          border-radius: 14px;
-          padding: 20px 24px;
-          transition: all 0.3s;
-        }
-
-        .fir-card.accepted {
-          border-left: 3px solid #10b981;
-        }
-
-        .fir-card:hover {
-          border-color: rgba(99, 102, 241, 0.3);
-          transform: translateY(-2px);
-        }
-
-        .fir-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          flex-wrap: wrap;
-          gap: 12px;
-          margin-bottom: 12px;
-        }
-
-        .fir-info {
-          display: flex;
-          gap: 12px;
-          align-items: center;
-          flex-wrap: wrap;
-        }
-
-        .fir-number {
-          font-weight: 700;
-          color: #818cf8;
-          background: rgba(99, 102, 241, 0.12);
-          padding: 4px 12px;
-          border-radius: 20px;
-          font-size: 0.8rem;
-        }
-
-        .fir-date {
-          font-size: 0.7rem;
-          color: #3d4459;
-        }
-
-        .fir-title {
-          font-size: 1rem;
-          font-weight: 600;
-          margin: 0 0 12px 0;
-          color: #e8ecf8;
-        }
-
-        .fir-details p {
-          margin: 6px 0;
-          font-size: 0.85rem;
-          color: #7a849c;
-        }
-
-        .fir-actions {
-          display: flex;
-          gap: 12px;
-          margin-top: 16px;
-          flex-wrap: wrap;
-        }
-
-        /* Case Card */
-        .case-card {
-          background: rgba(7, 9, 14, 0.5);
-          border: 1px solid rgba(99, 102, 241, 0.12);
-          border-radius: 14px;
-          padding: 20px;
-          transition: all 0.3s;
-        }
-
-        .case-card:hover {
-          border-color: rgba(99, 102, 241, 0.3);
-        }
-
-        .case-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          flex-wrap: wrap;
-          gap: 10px;
-          margin-bottom: 12px;
-        }
-
-        .case-actions {
-          display: flex;
-          gap: 10px;
-          flex-wrap: wrap;
-          margin-top: 16px;
-        }
-
-        /* Report Card */
-        .report-card {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          flex-wrap: wrap;
-          gap: 16px;
-          background: rgba(7, 9, 14, 0.5);
-          border: 1px solid rgba(99, 102, 241, 0.12);
-          border-radius: 12px;
-          padding: 20px;
-        }
-
-        .report-actions {
-          display: flex;
-          gap: 8px;
-          flex-wrap: wrap;
-        }
-
-        /* Form Card */
-        .form-card {
-          background: rgba(12, 15, 26, 0.6);
-          backdrop-filter: blur(10px);
-          border: 1px solid rgba(99, 102, 241, 0.12);
-          border-radius: 16px;
-          padding: 24px;
-        }
-
-        .form-group {
-          margin-bottom: 20px;
-        }
-
-        .form-group label {
-          display: block;
-          font-size: 0.8rem;
-          font-weight: 500;
-          color: #7a849c;
-          margin-bottom: 8px;
-        }
-
-        .form-group input,
-        .form-group select,
-        .form-group textarea {
-          width: 100%;
-          padding: 12px 16px;
-          background: rgba(7, 9, 14, 0.6);
-          border: 1px solid rgba(99, 102, 241, 0.15);
-          border-radius: 10px;
-          color: #e8ecf8;
-          font-size: 0.9rem;
-          transition: all 0.3s;
-        }
-
-        .form-group input:focus,
-        .form-group select:focus,
-        .form-group textarea:focus {
-          outline: none;
-          border-color: #6366f1;
-          background: rgba(99, 102, 241, 0.05);
-          box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-        }
-
-        /* Buttons */
-        .btn {
-          padding: 8px 16px;
-          border: none;
-          border-radius: 8px;
-          font-size: 0.8rem;
-          font-weight: 500;
-          cursor: pointer;
-          transition: all 0.2s;
-        }
-
-        .btn-primary {
-          background: linear-gradient(135deg, #6366f1, #4f46e5);
-          color: white;
-        }
-
-        .btn-secondary {
-          background: rgba(99, 102, 241, 0.15);
-          color: #818cf8;
-        }
-
-        .btn-success {
-          background: linear-gradient(135deg, #10b981, #059669);
-          color: white;
-        }
-
-        .btn-danger {
-          background: linear-gradient(135deg, #ef4444, #dc2626);
-          color: white;
-        }
-
-        .btn-warning {
-          background: linear-gradient(135deg, #f59e0b, #d97706);
-          color: white;
-        }
-
-        .btn:hover {
-          transform: translateY(-1px);
-        }
-
-        .back-btn {
-          background: #6b7280;
-          border: none;
-          padding: 8px 16px;
-          border-radius: 6px;
-          color: white;
-          cursor: pointer;
-          margin-bottom: 20px;
-        }
-
-        .icon-btn {
-          background: rgba(99, 102, 241, 0.1);
-          border: none;
-          padding: 6px 10px;
-          border-radius: 6px;
-          cursor: pointer;
-          font-size: 0.9rem;
-          transition: all 0.2s;
-        }
-
-        .icon-btn:hover {
-          background: rgba(99, 102, 241, 0.2);
-        }
-
-        .action-btns {
-          display: flex;
-          gap: 5px;
-          flex-wrap: wrap;
-        }
-
-        /* Search Bar */
-        .search-bar {
-          display: flex;
-          gap: 16px;
-          margin-bottom: 24px;
-          flex-wrap: wrap;
-        }
-
-        .search-bar input {
-          flex: 1;
-          padding: 12px 16px;
-          background: rgba(7, 9, 14, 0.6);
-          border: 1px solid rgba(99, 102, 241, 0.15);
-          border-radius: 10px;
-          color: #e8ecf8;
-        }
-
-        .search-bar select {
-          padding: 12px 16px;
-          background: rgba(7, 9, 14, 0.6);
-          border: 1px solid rgba(99, 102, 241, 0.15);
-          border-radius: 10px;
-          color: #e8ecf8;
-        }
-
-        /* Upload Area */
-        .upload-area {
-          border: 2px dashed rgba(99, 102, 241, 0.3);
-          border-radius: 12px;
-          padding: 32px;
-          text-align: center;
-          cursor: pointer;
-          transition: all 0.3s;
-        }
-
-        .upload-area:hover {
-          border-color: #6366f1;
-          background: rgba(99, 102, 241, 0.05);
-        }
-
-        .upload-icon {
-          font-size: 3rem;
-          margin-bottom: 8px;
-        }
-
-        /* Progress Bar */
-        .progress-bar {
-          height: 8px;
-          background: rgba(99, 102, 241, 0.2);
-          border-radius: 4px;
-          overflow: hidden;
-          margin: 16px 0;
-        }
-
-        .progress-fill {
-          height: 100%;
-          background: linear-gradient(90deg, #6366f1, #818cf8);
-          border-radius: 4px;
-          transition: width 0.3s;
-        }
-
-        /* Table */
-        .table-container {
-          overflow-x: auto;
-        }
-
-        .data-table {
-          width: 100%;
-          border-collapse: collapse;
-        }
-
-        .data-table th,
-        .data-table td {
-          padding: 12px;
-          text-align: left;
-          border-bottom: 1px solid rgba(99, 102, 241, 0.1);
-        }
-
-        .data-table th {
-          color: #818cf8;
-          font-weight: 600;
-          font-size: 0.8rem;
-        }
-
-        /* List Items */
-        .list-item {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          flex-wrap: wrap;
-          gap: 10px;
-          padding: 12px;
-          border-bottom: 1px solid rgba(99, 102, 241, 0.1);
-        }
-
-        /* Details */
-        .details-card {
-          background: rgba(12, 15, 26, 0.6);
-          backdrop-filter: blur(10px);
-          border: 1px solid rgba(99, 102, 241, 0.12);
-          border-radius: 16px;
-          padding: 24px;
-        }
-
-        .details-section {
-          margin-bottom: 24px;
-          padding-bottom: 16px;
-          border-bottom: 1px solid rgba(99, 102, 241, 0.1);
-        }
-
-        .details-section h3 {
-          color: #818cf8;
-          margin-bottom: 16px;
-        }
-
-        .details-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-          gap: 16px;
-        }
-
-        /* Timeline */
-        .timeline-item {
-          display: flex;
-          gap: 12px;
-          padding: 12px 0;
-          border-bottom: 1px solid rgba(99, 102, 241, 0.1);
-        }
-
-        .timeline-dot {
-          width: 10px;
-          height: 10px;
-          background: #6366f1;
-          border-radius: 50%;
-          margin-top: 6px;
-        }
-
-        .timeline-remarks {
-          font-size: 12px;
-          color: #7a849c;
-          margin-top: 4px;
-        }
-
-        .timeline-by {
-          font-size: 11px;
-          color: #3d4459;
-        }
-
-        /* Verify Section */
-        .verify-box {
-          background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(79, 70, 229, 0.04));
-          border-radius: 16px;
-          padding: 24px;
-          margin: 20px 0;
-        }
-
-        .evidence-details {
-          background: rgba(7, 9, 14, 0.5);
-          padding: 16px;
-          border-radius: 12px;
-          margin-top: 16px;
-        }
-
-        .verify-result {
-          display: flex;
-          align-items: center;
-          gap: 20px;
-          padding: 20px;
-          border-radius: 12px;
-          margin-top: 24px;
-        }
-
-        .verify-result.success {
-          background: rgba(16, 185, 129, 0.1);
-          border: 1px solid rgba(16, 185, 129, 0.3);
-        }
-
-        .verify-result.error {
-          background: rgba(239, 68, 68, 0.1);
-          border: 1px solid rgba(239, 68, 68, 0.3);
-        }
-
-        .result-icon {
-          font-size: 3rem;
-        }
-
-        /* Report View */
-        .report-view {
-          background: rgba(12, 15, 26, 0.8);
-          border-radius: 16px;
-          padding: 32px;
-        }
-
-        .report-header {
-          text-align: center;
-          margin-bottom: 32px;
-          padding-bottom: 24px;
-          border-bottom: 1px solid rgba(99, 102, 241, 0.15);
-        }
-
-        .report-header h1 {
-          color: #818cf8;
-          margin-bottom: 16px;
-        }
-
-        .report-section {
-          margin-bottom: 24px;
-          padding: 20px;
-          background: rgba(7, 9, 14, 0.5);
-          border-radius: 12px;
-        }
-
-        .report-actions-bottom {
-          display: flex;
-          gap: 12px;
-          justify-content: center;
-          margin-top: 32px;
-          flex-wrap: wrap;
-        }
-
-        /* Empty States */
-        .empty-state {
-          text-align: center;
-          padding: 20px;
-          color: #7a849c;
-        }
-
-        .empty-state-large {
-          text-align: center;
-          padding: 60px 20px;
-          background: rgba(12, 15, 26, 0.6);
-          border-radius: 16px;
-        }
-
-        .empty-icon {
-          font-size: 4rem;
-          margin-bottom: 16px;
-          opacity: 0.4;
-        }
-
-        .warning-text {
-          color: #f59e0b;
-          font-size: 0.85rem;
-        }
-
-        .doc-cid-preview {
+.fir-card {
+  background: rgba(7, 9, 14, 0.5);
+  border: 1px solid rgba(99, 102, 241, 0.12);
+  border-radius: 14px;
+  padding: 20px 24px;
+  transition: all 0.3s;
+}
+
+.fir-card.accepted {
+  border-left: 3px solid #10b981;
+}
+
+.fir-card:hover {
+  border-color: rgba(99, 102, 241, 0.3);
+  transform: translateY(-2px);
+}
+
+.fir-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.fir-info {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.fir-number {
+  font-weight: 700;
+  color: #818cf8;
+  background: rgba(99, 102, 241, 0.12);
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 0.8rem;
+}
+
+.fir-date {
+  font-size: 0.7rem;
+  color: #3d4459;
+}
+
+.fir-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 12px 0;
+  color: #e8ecf8;
+}
+
+.fir-details p {
+  margin: 6px 0;
+  font-size: 0.85rem;
+  color: #7a849c;
+}
+
+.fir-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+/* Case Card */
+.case-card {
+  background: rgba(7, 9, 14, 0.5);
+  border: 1px solid rgba(99, 102, 241, 0.12);
+  border-radius: 14px;
+  padding: 20px;
+  transition: all 0.3s;
+}
+
+.case-card:hover {
+  border-color: rgba(99, 102, 241, 0.3);
+}
+
+.case-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.case-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+/* Report Card */
+.report-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  background: rgba(7, 9, 14, 0.5);
+  border: 1px solid rgba(99, 102, 241, 0.12);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.report-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Form Card */
+.form-card {
+  background: rgba(12, 15, 26, 0.6);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(99, 102, 241, 0.12);
+  border-radius: 16px;
+  padding: 24px;
+}
+
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #7a849c;
+  margin-bottom: 8px;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+  width: 100%;
+  padding: 12px 16px;
+  background: rgba(7, 9, 14, 0.6);
+  border: 1px solid rgba(99, 102, 241, 0.15);
+  border-radius: 10px;
+  color: #e8ecf8;
+  font-size: 0.9rem;
+  transition: all 0.3s;
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: #6366f1;
+  background: rgba(99, 102, 241, 0.05);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+/* Buttons */
+.btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #6366f1, #4f46e5);
+  color: white;
+}
+
+.btn-secondary {
+  background: rgba(99, 102, 241, 0.15);
+  color: #818cf8;
+}
+
+.btn-success {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+}
+
+.btn-danger {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  color: white;
+}
+
+.btn-warning {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: white;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.back-btn {
+  background: #6b7280;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  color: white;
+  cursor: pointer;
+  margin-bottom: 20px;
+}
+
+.icon-btn {
+  background: rgba(99, 102, 241, 0.1);
+  border: none;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.icon-btn:hover {
+  background: rgba(99, 102, 241, 0.2);
+}
+
+.action-btns {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+/* Search Bar */
+.search-bar {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.search-bar input {
+  flex: 1;
+  padding: 12px 16px;
+  background: rgba(7, 9, 14, 0.6);
+  border: 1px solid rgba(99, 102, 241, 0.15);
+  border-radius: 10px;
+  color: #e8ecf8;
+}
+
+.search-bar select {
+  padding: 12px 16px;
+  background: rgba(7, 9, 14, 0.6);
+  border: 1px solid rgba(99, 102, 241, 0.15);
+  border-radius: 10px;
+  color: #e8ecf8;
+}
+
+/* Upload Area */
+.upload-area {
+  border: 2px dashed rgba(99, 102, 241, 0.3);
+  border-radius: 12px;
+  padding: 32px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.upload-area:hover {
+  border-color: #6366f1;
+  background: rgba(99, 102, 241, 0.05);
+}
+
+.upload-icon {
+  font-size: 3rem;
+  margin-bottom: 8px;
+}
+
+/* Progress Bar */
+.progress-bar {
+  height: 8px;
+  background: rgba(99, 102, 241, 0.2);
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 16px 0;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6366f1, #818cf8);
+  border-radius: 4px;
+  transition: width 0.3s;
+}
+
+/* Table */
+.table-container {
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.data-table th,
+.data-table td {
+  padding: 12px;
+  text-align: left;
+  border-bottom: 1px solid rgba(99, 102, 241, 0.1);
+}
+
+.data-table th {
+  color: #818cf8;
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+
+/* List Items */
+.list-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid rgba(99, 102, 241, 0.1);
+}
+
+/* Details */
+.details-card {
+  background: rgba(12, 15, 26, 0.6);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(99, 102, 241, 0.12);
+  border-radius: 16px;
+  padding: 24px;
+}
+
+.details-section {
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(99, 102, 241, 0.1);
+}
+
+.details-section h3 {
+  color: #818cf8;
+  margin-bottom: 16px;
+}
+
+.details-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 16px;
+}
+
+/* Timeline */
+.timeline-item {
+  display: flex;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(99, 102, 241, 0.1);
+}
+
+.timeline-dot {
+  width: 10px;
+  height: 10px;
+  background: #6366f1;
+  border-radius: 50%;
+  margin-top: 6px;
+}
+
+.timeline-remarks {
+  font-size: 12px;
+  color: #7a849c;
+  margin-top: 4px;
+}
+
+.timeline-by {
+  font-size: 11px;
+  color: #3d4459;
+}
+
+/* Verify Section */
+.verify-box {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(79, 70, 229, 0.04));
+  border-radius: 16px;
+  padding: 24px;
+  margin: 20px 0;
+}
+
+.evidence-details {
+  background: rgba(7, 9, 14, 0.5);
+  padding: 16px;
+  border-radius: 12px;
+  margin-top: 16px;
+}
+
+.verify-result {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 20px;
+  border-radius: 12px;
+  margin-top: 24px;
+}
+
+.verify-result.success {
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.verify-result.error {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.result-icon {
+  font-size: 3rem;
+}
+
+/* Report View */
+.report-view {
+  background: rgba(12, 15, 26, 0.8);
+  border-radius: 16px;
+  padding: 32px;
+}
+
+.report-header {
+  text-align: center;
+  margin-bottom: 32px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid rgba(99, 102, 241, 0.15);
+}
+
+.report-header h1 {
+  color: #818cf8;
+  margin-bottom: 16px;
+}
+
+.report-section {
+  margin-bottom: 24px;
+  padding: 20px;
+  background: rgba(7, 9, 14, 0.5);
+  border-radius: 12px;
+}
+
+.report-actions-bottom {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 32px;
+  flex-wrap: wrap;
+}
+
+/* Empty States */
+.empty-state {
+  text-align: center;
+  padding: 20px;
+  color: #7a849c;
+}
+
+.empty-state-large {
+  text-align: center;
+  padding: 60px 20px;
+  background: rgba(12, 15, 26, 0.6);
+  border-radius: 16px;
+}
+
+.empty-icon {
+  font-size: 4rem;
+  margin-bottom: 16px;
+  opacity: 0.4;
+}
+
+.warning-text {
+  color: #f59e0b;
+  font-size: 0.85rem;
+}
+
+.doc-cid-preview {
   font-size: 0.7rem;
   font-family: monospace;
   color: #818cf8;
@@ -4422,7 +4892,7 @@ export function InvestigatorView({
   border-radius: 4px;
 }
 
-        /* Enhanced Dropdown Styling - Add this to existing styles */
+/* Enhanced Dropdown Styling */
 select {
   appearance: none;
   background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23818cf8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
@@ -4578,7 +5048,8 @@ select:focus {
 .forensic-evidence-checkbox small {
   color: #818cf8;
 }
-  /* Evidence Case Selector */
+
+/* Evidence Case Selector */
 .evidence-case-select {
   width: 100%;
   padding: 12px 16px;
@@ -4621,7 +5092,25 @@ select:focus {
   margin: 0;
 }
 
-/* Document Review Modal Styles */
+/* Modal Container - Single Definition */
+.modal {
+  background: linear-gradient(135deg, #0c0f1a, #07090e);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: 20px;
+  width: 100%;
+  max-width: 650px;
+  max-height: 85vh;
+  overflow-y: auto;
+  animation: slideUp 0.3s ease;
+  position: relative;
+  margin: 0 auto;
+}
+
+/* For FIR details - larger modal */
+.modal-large {
+  max-width: 800px;
+}
+
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -4633,8 +5122,23 @@ select:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
-  animation: fadeIn 0.2s ease;
+  z-index: 99999 !important;
+  padding: 20px;
+}
+
+
+/* Ensure modal appears above everything including nav */
+.investigator-dashboard {
+  position: relative;
+}
+
+.dashboard-nav {
+  z-index: 100;
+}
+
+
+.modal {
+  z-index: 100000 !important;
 }
 
 @keyframes fadeIn {
@@ -4889,6 +5393,138 @@ select:focus {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+  .fir-card, .case-card {
+    padding: 16px;
+  }
+  
+  .fir-actions, .case-actions {
+    flex-direction: column;
+  }
+  
+  .fir-actions .btn, .case-actions .btn {
+    width: 100%;
+    text-align: center;
+  }
+  
+  .review-modal {
+    width: 95%;
+    margin: 10px;
+  }
+  
+  .review-modal-header {
+    flex-wrap: wrap;
+  }
+  
+  .review-doc-info {
+    flex-direction: column;
+    text-align: center;
+  }
+  
+  .review-modal-footer {
+    flex-direction: column;
+  }
+  
+  .review-btn-cancel, .review-btn-submit {
+    width: 100%;
+    text-align: center;
+    justify-content: center;
+  }
+}
+
+/* Ensure toast doesn't cover important UI */
+.dashboard-toast {
+  pointer-events: none;
+}
+
+.dashboard-toast .toast-inner {
+  pointer-events: auto;
+}
+
+/* For very small screens */
+@media (max-width: 480px) {
+  .dashboard-toast {
+    bottom: 70px;
+    padding: 10px 16px;
+  }
+  
+  .toast-text {
+    font-size: 0.75rem;
+  }
+  
+  .toast-icon {
+    font-size: 1rem;
+  }
+}
+
+/* For landscape mode on mobile */
+@media (max-width: 768px) and (orientation: landscape) {
+  .dashboard-toast {
+    bottom: 16px;
+    top: auto;
+  }
+}
+  .btn-info {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: white;
+}
+
+.btn-info:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.modal-large {
+  max-width: 800px;
+}
+
+  /* Modal Header Left */
+.modal-header-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.modal-icon {
+  width: 44px;
+  height: 44px;
+  background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(79,70,229,0.08));
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.3rem;
+}
+
+.modal-header-left h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #e8ecf8;
+  margin: 0 0 4px 0;
+}
+
+.modal-header-left p {
+  font-size: 0.7rem;
+  color: #7a849c;
+  margin: 0;
+}
+
+/* Full width in grid */
+.details-grid .full-width {
+  grid-column: span 2;
+}
+
+@media (max-width: 768px) {
+  .details-grid .full-width {
+    grid-column: span 1;
+  }
+  
+  .modal-header-left {
+    flex-wrap: wrap;
+  }
 }
       `}</style>
     </div>

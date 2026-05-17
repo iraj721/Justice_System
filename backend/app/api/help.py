@@ -35,7 +35,7 @@ async def get_faqs(category: Optional[str] = None):
             {
                 "id": 5,
                 "question": "Is my evidence secure?",
-                "answer": "Yes, all evidence is stored on IPFS (InterPlanetary File System) with cryptographic hash verification. Evidence cannot be tampered."
+                "answer": "Yes, all evidence is stored on Cloudinary with cryptographic hash verification. Evidence cannot be tampered."
             },
             {
                 "id": 6,
@@ -115,9 +115,9 @@ async def get_user_guides():
                     "Click 'Upload Evidence'",
                     "Enter evidence title and description",
                     "Select file to upload (max 50MB)",
-                    "Wait for IPFS upload (hash generated automatically)",
+                    "Wait for upload (hash generated automatically)",
                     "Save the evidence ID and hash for verification",
-                    "Evidence is now tamper-proof on IPFS"
+                    "Evidence is now tamper-proof on Cloudinary"
                 ]
             },
             {

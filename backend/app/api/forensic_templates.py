@@ -7,8 +7,7 @@ import uuid
 import json
 from app.core.authz import require_roles
 from app.core.roles import UserRole
-from app.services.ipfs_storage import ipfs_storage
-from app.core.ipfs_client import ipfs_client
+from app.services.mongo_storage import mongo_storage
 
 router = APIRouter(prefix="/forensic/templates", tags=["Forensic Templates"])
 
@@ -74,7 +73,7 @@ async def get_predefined_templates(current_user: dict = Depends(require_roles(Us
 @router.get("/my-templates")
 async def get_my_templates(current_user: dict = Depends(require_roles(UserRole.FORENSIC_ANALYST))):
     """Get user's custom templates"""
-    templates = ipfs_storage.get_user_templates(current_user["email"])
+    templates = await mongo_storage.get_user_templates(current_user["email"])
     return list(templates.values())
 
 @router.post("/create")
@@ -94,9 +93,9 @@ async def create_template(payload: TemplateCreate, current_user: dict = Depends(
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     
-    templates = ipfs_storage.get_user_templates(current_user["email"])
+    templates = await mongo_storage.get_user_templates(current_user["email"])
     templates[template_id] = template
-    ipfs_storage.save_user_templates(current_user["email"], templates)
+    await mongo_storage.save_user_templates(current_user["email"], templates)
     
     return template
 
@@ -108,12 +107,12 @@ async def generate_report_from_template(
 ):
     """Generate formatted report using template"""
     # Find analysis
-    all_evidence = ipfs_storage.get_all_evidence()
+    all_evidence = await mongo_storage.get_all_evidence()
     found_analysis = None
     found_evidence = None
     
     for evidence in all_evidence:
-        analyses = ipfs_storage.get_evidence_analyses(evidence.get("evidence_id"))
+        analyses = await mongo_storage.get_evidence_analyses(evidence.get("evidence_id"))
         if analysis_id in analyses:
             found_analysis = analyses[analysis_id]
             found_evidence = evidence
@@ -123,7 +122,7 @@ async def generate_report_from_template(
         raise HTTPException(status_code=404, detail="Analysis not found")
     
     # Get template
-    templates = ipfs_storage.get_user_templates(current_user["email"])
+    templates = await mongo_storage.get_user_templates(current_user["email"])
     template = templates.get(template_id)
     
     if not template:
@@ -134,8 +133,8 @@ async def generate_report_from_template(
         raise HTTPException(status_code=404, detail="Template not found")
     
     # Generate formatted report
-    case = ipfs_storage.get_case(found_evidence.get("case_id"))
-    fir = ipfs_storage.get_fir(case.get("fir_id")) if case else None
+    case = await mongo_storage.get_case(found_evidence.get("case_id"))
+    fir = await mongo_storage.get_fir(case.get("fir_id")) if case else None
     
     report = {
         "report_id": f"FR-{uuid.uuid4().hex[:8].upper()}",
@@ -151,7 +150,7 @@ async def generate_report_from_template(
             "evidence_id": found_evidence.get("evidence_id"),
             "title": found_evidence.get("title"),
             "description": found_evidence.get("description"),
-            "ipfs_cid": found_evidence.get("ipfs_cid"),
+            "cloudinary_url": found_evidence.get("cloudinary_url") or found_evidence.get("ipfs_cid"),
             "hash": found_evidence.get("hash")
         },
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -160,8 +159,8 @@ async def generate_report_from_template(
     }
     
     # Save report
-    reports = ipfs_storage.get_forensic_reports()
+    reports = await mongo_storage.get_forensic_reports()
     reports[report["report_id"]] = report
-    ipfs_storage.save_forensic_reports(reports)
+    await mongo_storage.save_forensic_reports(reports)
     
     return report

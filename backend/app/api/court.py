@@ -5,12 +5,11 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 import uuid
 import hashlib
+import json
 from app.core.authz import require_roles, get_current_user
 from app.core.roles import UserRole
-from app.core.ipfs_client import ipfs_client
-from app.services.ipfs_storage import ipfs_storage
+from app.services.mongo_storage import mongo_storage
 from fastapi import UploadFile, File
-from app.services.chain_anchor import anchor_sha256
 from fastapi.responses import FileResponse, Response
 from app.services.notification_service import notification_service
 
@@ -20,6 +19,8 @@ router = APIRouter(prefix="/court", tags=["Court"])
 # ============ Request Models ============
 class JudgmentRequest(BaseModel):
     case_id: str
+    suspect_id: Optional[str] = None
+    suspect_name: Optional[str] = None
     verdict: str
     sentence: Optional[str] = None
     reasoning: str
@@ -48,21 +49,21 @@ class EvidenceReviewRequest(BaseModel):
 @router.get("/cases-for-review")
 async def get_cases_for_review(current_user: dict = Depends(require_roles(UserRole.COURT))):
     """Get all cases submitted to court for review"""
-    all_cases = ipfs_storage.get_all_cases()
+    all_cases = await mongo_storage.get_all_cases()
     
     court_cases = []
     for case in all_cases:
         if case.get("status") in ["SUBMITTED_TO_COURT", "UNDER_COURT_REVIEW"]:
-            fir = ipfs_storage.get_fir(case.get("fir_id"))
+            fir = await mongo_storage.get_fir(case.get("fir_id"))
             evidence_list = []
             for ev_id in case.get("evidence", []):
-                ev = ipfs_storage.get_evidence(ev_id)
+                ev = await mongo_storage.get_evidence(ev_id)
                 if ev:
                     evidence_list.append({
                         "evidence_id": ev.get("evidence_id"),
                         "title": ev.get("title"),
                         "description": ev.get("description"),
-                        "ipfs_cid": ev.get("ipfs_cid"),
+                        "cloudinary_url": ev.get("cloudinary_url") or ev.get("ipfs_cid"),
                         "hash": ev.get("hash"),
                         "status": ev.get("status"),
                         "verifications": ev.get("verifications", [])
@@ -99,11 +100,11 @@ async def create_judgment(
     current_user: dict = Depends(require_roles(UserRole.COURT))
 ):
     """Deliver judgment for a case"""
-    case = ipfs_storage.get_case(payload.case_id)
+    case = await mongo_storage.get_case(payload.case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
-    existing_judgments_dict = ipfs_storage.get_all_judgments()
+    existing_judgments_dict = await mongo_storage.get_all_judgments()
     for j in existing_judgments_dict.values():
         if j.get("case_id") == payload.case_id:
             raise HTTPException(status_code=400, detail="Judgment already delivered for this case")
@@ -127,30 +128,18 @@ async def create_judgment(
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     
-    try:
-        ipfs_cid = await ipfs_client.upload_json(judgment_data)
-        judgment_hash = ipfs_client.generate_hash(judgment_data)
-        judgment_data["ipfs_cid"] = ipfs_cid
-        judgment_data["hash"] = judgment_hash
-    except Exception as e:
-        print(f"IPFS upload failed: {e}")
-        judgment_data["ipfs_cid"] = "UPLOAD_FAILED"
-        judgment_data["hash"] = ipfs_client.generate_hash(judgment_data)
-    
-    ipfs_storage.save_judgment(judgment_id, judgment_data)
-    anchor_sha256(
-        object_type="JUDGMENT",
-        object_id=judgment_id,
-        sha256_hex=judgment_data.get("hash", ""),
-        ipfs_cid=judgment_data.get("ipfs_cid", ""),
-    )
+    judgment_hash = hashlib.sha256(json.dumps(judgment_data, default=str).encode()).hexdigest()
+    judgment_data["hash"] = judgment_hash
+    judgment_data["storage_cid"] = "STORED_IN_MONGODB"
+
+    await mongo_storage.save_judgment(judgment_id, judgment_data)
     
     case["status"] = "DECIDED"
     case["verdict"] = payload.verdict
     case["judgment_id"] = judgment_id
     case["judgment_date"] = datetime.now(timezone.utc).isoformat()
     case["judge_name"] = current_user.get("full_name", "")
-    ipfs_storage.update_case(payload.case_id, case)
+    await mongo_storage.update_case(payload.case_id, case)
     
     return judgment_data
 
@@ -160,7 +149,7 @@ async def get_judgments(
     case_id: Optional[str] = None
 ):
     """Get all judgments or filter by case"""
-    all_judgments_dict = ipfs_storage.get_all_judgments()
+    all_judgments_dict = await mongo_storage.get_all_judgments()
     judgments_list = list(all_judgments_dict.values())
     
     if case_id:
@@ -171,21 +160,21 @@ async def get_judgments(
 @router.get("/judgment/{judgment_id}")
 async def get_judgment(judgment_id: str, current_user: dict = Depends(get_current_user)):
     """Get specific judgment details"""
-    judgment = ipfs_storage.get_judgment(judgment_id)
+    judgment = await mongo_storage.get_judgment(judgment_id)
     if not judgment:
         raise HTTPException(status_code=404, detail="Judgment not found")
     
     user_role = current_user.get("role")
     
     if user_role == UserRole.INVESTIGATOR.value:
-        case = ipfs_storage.get_case(judgment.get("case_id"))
+        case = await mongo_storage.get_case(judgment.get("case_id"))
         if case and case.get("investigator_email") != current_user["email"]:
             raise HTTPException(status_code=403, detail="Access denied")
     
     if user_role == UserRole.PUBLIC_USER.value:
-        case = ipfs_storage.get_case(judgment.get("case_id"))
+        case = await mongo_storage.get_case(judgment.get("case_id"))
         if case:
-            fir = ipfs_storage.get_fir(case.get("fir_id"))
+            fir = await mongo_storage.get_fir(case.get("fir_id"))
             if fir and fir.get("complainant_email") != current_user["email"]:
                 raise HTTPException(status_code=403, detail="Access denied")
     
@@ -197,7 +186,7 @@ async def schedule_hearing(
     current_user: dict = Depends(require_roles(UserRole.COURT))
 ):
     """Schedule a court hearing for a case"""
-    case = ipfs_storage.get_case(payload.case_id)
+    case = await mongo_storage.get_case(payload.case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
@@ -224,19 +213,19 @@ async def schedule_hearing(
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     
-    hearings = ipfs_storage.get_case_hearings(payload.case_id)
+    hearings = await mongo_storage.get_case_hearings(payload.case_id)
     hearings[hearing_id] = hearing_data
-    ipfs_storage.save_case_hearings(payload.case_id, hearings)
+    await mongo_storage.save_case_hearings(payload.case_id, hearings)
     
     if "hearings" not in case:
         case["hearings"] = []
     case["hearings"].append(hearing_id)
     case["next_hearing_date"] = f"{payload.hearing_date} {payload.hearing_time}"
-    ipfs_storage.update_case(payload.case_id, case)
+    await mongo_storage.update_case(payload.case_id, case)
     
     # ============ SEND EMAIL NOTIFICATIONS ============
     try:
-        fir = ipfs_storage.get_fir(case.get("fir_id"))
+        fir = await mongo_storage.get_fir(case.get("fir_id"))
         hearing_datetime = f"{payload.hearing_date} at {payload.hearing_time}"
         
         # Email to Investigator
@@ -289,14 +278,14 @@ async def schedule_hearing(
             
             # Save notifications
             if case.get("investigator_email"):
-                inv_notifications = ipfs_storage.get_user_notifications(case.get("investigator_email"))
+                inv_notifications = await mongo_storage.get_user_notifications(case.get("investigator_email"))
                 inv_notifications[investigator_notification["notification_id"]] = investigator_notification
-                ipfs_storage.save_user_notifications(case.get("investigator_email"), inv_notifications)
+                await mongo_storage.save_user_notifications(case.get("investigator_email"), inv_notifications)
             
             if complainant_email:
-                comp_notifications = ipfs_storage.get_user_notifications(complainant_email)
+                comp_notifications = await mongo_storage.get_user_notifications(complainant_email)
                 comp_notifications[complainant_notification["notification_id"]] = complainant_notification
-                ipfs_storage.save_user_notifications(complainant_email, comp_notifications)
+                await mongo_storage.save_user_notifications(complainant_email, comp_notifications)
             
             print(f"✅ In-app notifications sent for hearing {hearing_id}")
         except Exception as e:
@@ -319,7 +308,7 @@ async def schedule_hearing(
 @router.get("/hearings/{case_id}")
 async def get_case_hearings(case_id: str, current_user: dict = Depends(require_roles(UserRole.COURT))):
     """Get all hearings for a case"""
-    hearings = ipfs_storage.get_case_hearings(case_id)
+    hearings = await mongo_storage.get_case_hearings(case_id)
     return list(hearings.values())
 
 @router.put("/hearing/{hearing_id}")
@@ -328,12 +317,12 @@ async def update_hearing_status(
     current_user: dict = Depends(require_roles(UserRole.COURT))
 ):
     """Update hearing status"""
-    all_cases = ipfs_storage.get_all_cases()
+    all_cases = await mongo_storage.get_all_cases()
     found_hearing = None
     found_case_id = None
     
     for case in all_cases:
-        hearings = ipfs_storage.get_case_hearings(case.get("case_id"))
+        hearings = await mongo_storage.get_case_hearings(case.get("case_id"))
         if payload.hearing_id in hearings:
             found_hearing = hearings[payload.hearing_id]
             found_case_id = case.get("case_id")
@@ -342,13 +331,13 @@ async def update_hearing_status(
     if not found_hearing:
         raise HTTPException(status_code=404, detail="Hearing not found")
     
-    hearings = ipfs_storage.get_case_hearings(found_case_id)
+    hearings = await mongo_storage.get_case_hearings(found_case_id)
     hearings[payload.hearing_id]["status"] = payload.status
     if payload.notes:
         hearings[payload.hearing_id]["notes"] = payload.notes
     hearings[payload.hearing_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
     
-    ipfs_storage.save_case_hearings(found_case_id, hearings)
+    await mongo_storage.save_case_hearings(found_case_id, hearings)
     
     return {"message": f"Hearing status updated to {payload.status}", "hearing": hearings[payload.hearing_id]}
 
@@ -359,7 +348,7 @@ async def review_evidence(
     current_user: dict = Depends(require_roles(UserRole.COURT))
 ):
     """Review evidence for admissibility"""
-    evidence = ipfs_storage.get_evidence(payload.evidence_id)
+    evidence = await mongo_storage.get_evidence(payload.evidence_id)
     if not evidence:
         raise HTTPException(status_code=404, detail="Evidence not found")
     
@@ -378,7 +367,7 @@ async def review_evidence(
     
     evidence["court_reviews"].append(review_record)
     evidence["court_admissible"] = payload.is_admissible
-    ipfs_storage.save_evidence(payload.evidence_id, evidence)
+    await mongo_storage.save_evidence(payload.evidence_id, evidence)
     
     return review_record
 
@@ -386,8 +375,8 @@ async def review_evidence(
 @router.get("/stats")
 async def get_court_stats(current_user: dict = Depends(require_roles(UserRole.COURT))):
     """Get court statistics"""
-    all_cases = ipfs_storage.get_all_cases()
-    all_judgments_dict = ipfs_storage.get_all_judgments()
+    all_cases = await mongo_storage.get_all_cases()
+    all_judgments_dict = await mongo_storage.get_all_judgments()
     all_judgments_list = list(all_judgments_dict.values())
     
     pending_cases = [c for c in all_cases if c.get("status") in ["SUBMITTED_TO_COURT", "UNDER_COURT_REVIEW"]]
@@ -411,7 +400,7 @@ async def get_court_stats(current_user: dict = Depends(require_roles(UserRole.CO
     today = datetime.now(timezone.utc).date()
     
     for case in all_cases:
-        hearings = ipfs_storage.get_case_hearings(case.get("case_id"))
+        hearings = await mongo_storage.get_case_hearings(case.get("case_id"))
         total_hearings += len(hearings)
         for hearing in hearings.values():
             if hearing.get("status") == "SCHEDULED":
@@ -442,7 +431,7 @@ async def search_cases(
     current_user: dict = Depends(require_roles(UserRole.COURT))
 ):
     """Search cases with filters"""
-    all_cases = ipfs_storage.get_all_cases()
+    all_cases = await mongo_storage.get_all_cases()
     results = []
     
     for case in all_cases:
@@ -474,7 +463,7 @@ async def search_cases(
                     q_lower in case.get("description", "").lower()):
                 continue
         
-        fir = ipfs_storage.get_fir(case.get("fir_id"))
+        fir = await mongo_storage.get_fir(case.get("fir_id"))
         results.append({
             "case_id": case.get("case_id"),
             "case_number": case.get("case_number"),
@@ -492,19 +481,19 @@ async def search_cases(
 @router.get("/evidence-list/{case_id}")
 async def get_case_evidence_for_court(case_id: str, current_user: dict = Depends(require_roles(UserRole.COURT))):
     """Get all evidence for a specific case"""
-    case = ipfs_storage.get_case(case_id)
+    case = await mongo_storage.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
     evidence_list = []
     for ev_id in case.get("evidence", []):
-        ev = ipfs_storage.get_evidence(ev_id)
+        ev = await mongo_storage.get_evidence(ev_id)
         if ev:
             evidence_list.append({
                 "evidence_id": ev.get("evidence_id"),
                 "title": ev.get("title"),
                 "description": ev.get("description"),
-                "ipfs_cid": ev.get("ipfs_cid"),
+                "cloudinary_url": ev.get("cloudinary_url") or ev.get("ipfs_cid"),
                 "hash": ev.get("hash"),
                 "status": ev.get("status"),
                 "verifications": ev.get("verifications", []),
@@ -517,7 +506,7 @@ async def get_case_evidence_for_court(case_id: str, current_user: dict = Depends
 @router.get("/evidence-timeline/{evidence_id}")
 async def get_evidence_timeline(evidence_id: str, current_user: dict = Depends(require_roles(UserRole.COURT))):
     """Get complete timeline of evidence from upload to current state"""
-    evidence = ipfs_storage.get_evidence(evidence_id)
+    evidence = await mongo_storage.get_evidence(evidence_id)
     if not evidence:
         raise HTTPException(status_code=404, detail="Evidence not found")
     
@@ -600,7 +589,7 @@ async def get_evidence_timeline(evidence_id: str, current_user: dict = Depends(r
         "evidence_id": evidence_id,
         "evidence_title": evidence.get("title"),
         "hash": evidence.get("hash"),
-        "ipfs_cid": evidence.get("ipfs_cid"),
+        "cloudinary_url": evidence.get("cloudinary_url") or evidence.get("ipfs_cid"),
         "timeline": timeline
     }
 
@@ -611,7 +600,7 @@ async def verify_evidence_file_court(
     current_user: dict = Depends(require_roles(UserRole.COURT))
 ):
     """Verify evidence by uploading original file"""
-    evidence = ipfs_storage.get_evidence(evidence_id)
+    evidence = await mongo_storage.get_evidence(evidence_id)
     if not evidence:
         raise HTTPException(status_code=404, detail="Evidence not found")
     
@@ -633,7 +622,7 @@ async def verify_evidence_file_court(
     if "verifications" not in evidence:
         evidence["verifications"] = []
     evidence["verifications"].append(verification_record)
-    ipfs_storage.save_evidence(evidence_id, evidence)
+    await mongo_storage.save_evidence(evidence_id, evidence)
     
     return {
         "verified": is_valid,
@@ -650,7 +639,7 @@ async def verify_evidence_hash_court(
     current_user: dict = Depends(require_roles(UserRole.COURT))
 ):
     """Verify evidence by providing hash"""
-    evidence = ipfs_storage.get_evidence(evidence_id)
+    evidence = await mongo_storage.get_evidence(evidence_id)
     if not evidence:
         raise HTTPException(status_code=404, detail="Evidence not found")
     
@@ -670,7 +659,7 @@ async def verify_evidence_hash_court(
     if "verifications" not in evidence:
         evidence["verifications"] = []
     evidence["verifications"].append(verification_record)
-    ipfs_storage.save_evidence(evidence_id, evidence)
+    await mongo_storage.save_evidence(evidence_id, evidence)
     
     return {
         "verified": is_valid,
@@ -685,7 +674,7 @@ async def get_case_forensic_reports(
     current_user: dict = Depends(require_roles(UserRole.COURT))
 ):
     """Get all forensic reports for a case and mark as viewed"""
-    forensic_reports = ipfs_storage.get_forensic_reports()
+    forensic_reports = await mongo_storage.get_forensic_reports()
     reports_list = list(forensic_reports.values())
     
     case_reports = []
@@ -696,9 +685,9 @@ async def get_case_forensic_reports(
                 report["court_viewed_at"] = datetime.now(timezone.utc).isoformat()
                 report["court_viewed_by"] = current_user["email"]
                 report["court_viewed_by_name"] = current_user.get("full_name")
-                ipfs_storage.save_forensic_reports(forensic_reports)
+                await mongo_storage.save_forensic_reports(forensic_reports)
             
-            evidence = ipfs_storage.get_evidence(report.get("evidence_id"))
+            evidence = await mongo_storage.get_evidence(report.get("evidence_id"))
             case_reports.append({
                 "report_id": report.get("report_id"),
                 "report_number": report.get("report_number"),
@@ -710,7 +699,7 @@ async def get_case_forensic_reports(
                 "analyst_name": report.get("analyst_name"),
                 "analyst_email": report.get("analyst_email"),
                 "created_at": report.get("created_at"),
-                "ipfs_cid": report.get("ipfs_cid", ""),
+                "cloudinary_url": report.get("cloudinary_url") or report.get("ipfs_cid", ""),
                 "hash": report.get("hash", "")
             })
     
@@ -897,58 +886,6 @@ async def download_full_case_report_options():
         }
     )
 
-@router.get("/hearing/access/{hearing_id}")
-async def check_hearing_access(
-    hearing_id: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """Check if user can access the hearing (only at scheduled time)"""
-    
-    # Find hearing
-    all_cases = ipfs_storage.get_all_cases()
-    found_hearing = None
-    found_case = None
-    
-    for case in all_cases:
-        hearings = ipfs_storage.get_case_hearings(case.get("case_id"))
-        if hearing_id in hearings:
-            found_hearing = hearings[hearing_id]
-            found_case = case
-            break
-    
-    if not found_hearing:
-        raise HTTPException(status_code=404, detail="Hearing not found")
-    
-    # Check authorization
-    fir = ipfs_storage.get_fir(found_case.get("fir_id"))
-    user_email = current_user["email"]
-    user_role = current_user["role"]
-    
-    is_investigator = found_case.get("investigator_email") == user_email
-    is_complainant = fir and fir.get("complainant_email") == user_email
-    is_court = user_role == "COURT"
-    
-    if not (is_investigator or is_complainant or is_court):
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    # Check timing
-    now = datetime.now(timezone.utc)
-    hearing_datetime = datetime.fromisoformat(f"{found_hearing['hearing_date']}T{found_hearing['hearing_time']}")
-    
-    # Allow access 15 minutes before scheduled time
-    can_access_early = now >= (hearing_datetime - timedelta(minutes=15))
-    can_access_late = now <= (hearing_datetime + timedelta(hours=2))  # 2 hours late allowed
-    
-    can_access = can_access_early and can_access_late and found_hearing.get("status") == "SCHEDULED"
-    
-    return {
-        "can_access": can_access,
-        "hearing_id": hearing_id,
-        "hearing_datetime": hearing_datetime.isoformat(),
-        "now": now.isoformat(),
-        "meeting_link": found_hearing.get("meeting_link") if can_access else None,
-        "message": "You can join the hearing now" if can_access else "Hearing is not available at this time. Please check the scheduled time."
-    }
 
 # ============ HEARING ACCESS ENDPOINT ============
 @router.get("/hearing/access/{hearing_id}")
@@ -960,12 +897,12 @@ async def check_hearing_access(
     from datetime import timedelta
     
     # Find hearing
-    all_cases = ipfs_storage.get_all_cases()
+    all_cases = await mongo_storage.get_all_cases()
     found_hearing = None
     found_case = None
     
     for case in all_cases:
-        hearings = ipfs_storage.get_case_hearings(case.get("case_id"))
+        hearings = await mongo_storage.get_case_hearings(case.get("case_id"))
         if hearing_id in hearings:
             found_hearing = hearings[hearing_id]
             found_case = case
@@ -975,7 +912,7 @@ async def check_hearing_access(
         raise HTTPException(status_code=404, detail="Hearing not found")
     
     # Check authorization
-    fir = ipfs_storage.get_fir(found_case.get("fir_id"))
+    fir = await mongo_storage.get_fir(found_case.get("fir_id"))
     user_email = current_user["email"]
     user_role = current_user["role"]
     

@@ -1,4 +1,5 @@
 # backend/app/api/auth.py
+import hashlib
 from fastapi import APIRouter, HTTPException, status, Depends, Request
 from pydantic import BaseModel, EmailStr
 from datetime import datetime, timezone
@@ -12,8 +13,8 @@ from app.core.security import hash_password, verify_password, create_access_toke
 from app.core.roles import UserRole, RESTRICTED_ROLES, ONBOARDING_CODES
 from app.core.authz import get_current_user
 from app.core.config import settings
-from app.services.ipfs_storage import ipfs_storage
-from app.core.ipfs_client import ipfs_client
+from app.services.mongo_storage import mongo_storage
+
 
 # NEW: Rate limiting
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -100,7 +101,7 @@ class AuthResponse(BaseModel):
     role: UserRole
     full_name: str
     email: str
-    ipfs_cid: str = ""
+    storage_cid: str = ""  # Changed from ipfs_cid
     hash: str = ""
 
 class UserResponse(BaseModel):
@@ -109,7 +110,7 @@ class UserResponse(BaseModel):
     full_name: str
     role: UserRole
     created_at: str
-    ipfs_cid: str = ""
+    storage_cid: str = ""  # Changed from ipfs_cid
     hash: str = ""
 
 def store_password(email: str, password_hash: str):
@@ -175,7 +176,7 @@ def is_account_locked(email: str) -> bool:
             return True
     return False
 
-# ============ NEW: Request OTP ============
+# ============ Request OTP ============
 class OTPRequest(BaseModel):
     email: EmailStr
     full_name: str
@@ -193,7 +194,7 @@ async def send_verification_otp(request: Request, payload: OTPRequest):
     """Send OTP to email for verification"""
     
     # Check if email already registered
-    existing_user = ipfs_storage.get_user(payload.email)
+    existing_user = await mongo_storage.get_user(payload.email)
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
     
@@ -216,7 +217,7 @@ async def send_verification_otp(request: Request, payload: OTPRequest):
             detail=f"Password requirements: {', '.join(password_errors)}"
         )
     
-    # Validate email domain (optional)
+    # Validate email domain
     allowed_domains = ['gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com']
     email_domain = payload.email.split('@')[-1].lower()
     if email_domain not in allowed_domains:
@@ -250,7 +251,7 @@ async def send_verification_otp(request: Request, payload: OTPRequest):
     }
 
 
-# ============ NEW: Verify OTP and Complete Registration ============
+# ============ Verify OTP and Complete Registration ============
 @router.post("/verify-otp", response_model=AuthResponse)
 @limiter.limit("5/minute")
 async def verify_and_register(request: Request, payload: OTPVerifyRequest):
@@ -266,7 +267,7 @@ async def verify_and_register(request: Request, payload: OTPVerifyRequest):
         raise HTTPException(status_code=400, detail="Registration session expired. Please try again.")
     
     # Check if user exists (in case someone registered while OTP was pending)
-    existing_user = ipfs_storage.get_user(payload.email)
+    existing_user = await mongo_storage.get_user(payload.email)
     if existing_user:
         del temp_storage[payload.email]
         email_service.clear_otp(payload.email)
@@ -295,70 +296,11 @@ async def verify_and_register(request: Request, payload: OTPVerifyRequest):
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     
-    # Upload to IPFS
-    try:
-        user_cid = await ipfs_client.upload_json(user_data)
-        user_hash = ipfs_client.generate_hash(user_data)
-        user_data["ipfs_cid"] = user_cid
-        user_data["hash"] = user_hash
-    except Exception as e:
-        print(f"IPFS upload failed: {e}")
-        user_data["ipfs_cid"] = "UPLOAD_FAILED"
-        user_data["hash"] = ipfs_client.generate_hash(user_data)
+    user_hash = hashlib.sha256(json.dumps(user_data, default=str).encode()).hexdigest()
+    user_data["hash"] = user_hash
+    user_data["storage_cid"] = "STORED_IN_MONGODB"
     
-    ipfs_storage.save_user(payload.email, user_data)
-    
-        # ============ REGISTER ON BLOCKCHAIN ============
-    try:
-        from web3 import Web3
-        
-        w3 = Web3(Web3.HTTPProvider(settings.CHAIN_RPC_URL))
-        print(f"🔗 Blockchain connected: {w3.is_connected()}")
-        
-        if w3.is_connected():
-            contract_address = Web3.to_checksum_address(settings.CHAIN_CONTRACT_ADDRESS)
-            
-            contract_abi = [{
-                "inputs": [
-                    {"internalType": "uint8", "name": "role", "type": "uint8"},
-                    {"internalType": "bytes32", "name": "emailHash", "type": "bytes32"},
-                    {"internalType": "bytes32", "name": "ipfsCid", "type": "bytes32"}
-                ],
-                "name": "registerUser",
-                "outputs": [],
-                "stateMutability": "nonpayable",
-                "type": "function"
-            }]
-            
-            contract = w3.eth.contract(address=contract_address, abi=contract_abi)
-            account = w3.eth.account.from_key(settings.CHAIN_PRIVATE_KEY)
-            
-            role_map = {"PUBLIC_USER": 1, "INVESTIGATOR": 2, "FORENSIC_ANALYST": 3, "COURT": 4}
-            role_num = role_map.get(role.value, 1)
-            
-            email_hash = Web3.keccak(text=payload.email)
-            ipfs_cid_hash = Web3.keccak(text=user_data.get("ipfs_cid", ""))
-            
-            nonce = w3.eth.get_transaction_count(account.address)
-            tx = contract.functions.registerUser(role_num, email_hash, ipfs_cid_hash).build_transaction({
-                "from": account.address,
-                "nonce": nonce,
-                "gas": 200000,
-                "gasPrice": w3.to_wei(20, "gwei")
-            })
-            
-            signed = account.sign_transaction(tx)
-            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-            
-            # FIXED: tx_hash is already a string or bytes, handle both cases
-            if hasattr(tx_hash, 'hex'):
-                print(f"✅ User registered on blockchain: {tx_hash.hex()}")
-            else:
-                print(f"✅ User registered on blockchain: {tx_hash}")
-                
-    except Exception as e:
-        print(f"⚠️ Blockchain registration failed: {e}")
-    # ============ END BLOCKCHAIN REGISTRATION ============
+    await mongo_storage.save_user(payload.email, user_data)
     
     # Clear temp data
     del temp_storage[payload.email]
@@ -376,12 +318,12 @@ async def verify_and_register(request: Request, payload: OTPVerifyRequest):
         role=role,
         full_name=reg_data["full_name"],
         email=payload.email,
-        ipfs_cid=user_data.get("ipfs_cid", ""),
+        storage_cid=user_data.get("storage_cid", ""),
         hash=user_data.get("hash", "")
     )
 
 
-# ============ NEW: Resend OTP ============
+# ============ Resend OTP ============
 class ResendOTPRequest(BaseModel):
     email: EmailStr
 
@@ -404,22 +346,22 @@ async def resend_otp(request: Request, payload: ResendOTPRequest):
     
     return {"success": True, "message": f"New verification code sent to {payload.email}"}
 
+
+# ============ REGISTER ENDPOINT (Alternative without OTP) ============
 @router.post("/register", response_model=AuthResponse)
-@limiter.limit("10/minute")  # Rate limit registration
+@limiter.limit("10/minute")
 async def register(request: Request, payload: RegisterRequest):
     """Register new user with database password storage"""
     
-    # Check if user exists in IPFS
-    existing_user = ipfs_storage.get_user(payload.email)
+    # Check if user exists in MongoDB
+    existing_user = await mongo_storage.get_user(payload.email)
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # ============ NEW: Validate email domain ============
-    # Allow only gmail.com, yahoo.com, outlook.com, etc.
+    # Validate email domain
     allowed_domains = ['gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com']
     email_domain = payload.email.split('@')[-1].lower()
 
-    # Check if domain is allowed
     if email_domain not in allowed_domains:
         raise HTTPException(
             status_code=400, 
@@ -437,7 +379,7 @@ async def register(request: Request, payload: RegisterRequest):
     
     user_id = str(uuid.uuid4())
     
-    # Store password hash in SQLite database (not JSON file)
+    # Store password hash in SQLite database
     password_hash = hash_password(payload.password)
     store_password(payload.email, password_hash)
     
@@ -449,14 +391,13 @@ async def register(request: Request, payload: RegisterRequest):
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     
-    # Upload user to IPFS
-    user_cid = await ipfs_client.upload_json(user_data)
-    user_hash = ipfs_client.generate_hash(user_data)
-    user_data["ipfs_cid"] = user_cid
+    # Generate hash
+    user_hash = hashlib.sha256(json.dumps(user_data, default=str).encode()).hexdigest()
     user_data["hash"] = user_hash
-    
-    # Store on IPFS
-    ipfs_storage.save_user(payload.email, user_data)
+    user_data["storage_cid"] = "STORED_IN_MONGODB"
+
+    # Store in MongoDB
+    await mongo_storage.save_user(payload.email, user_data)
     
     token = create_access_token({
         "sub": payload.email,
@@ -469,12 +410,14 @@ async def register(request: Request, payload: RegisterRequest):
         role=payload.role,
         full_name=payload.full_name,
         email=payload.email,
-        ipfs_cid=user_cid,
-        hash=user_hash
+        storage_cid=user_data.get("storage_cid", ""),
+        hash=user_data.get("hash", "")
     )
 
+
+# ============ LOGIN ENDPOINT ============
 @router.post("/login", response_model=AuthResponse)
-@limiter.limit("5/minute")  # Rate limit: max 5 attempts per minute
+@limiter.limit("5/minute")
 async def login(request: Request, payload: LoginRequest):
     """Login with rate limiting and account lockout protection"""
     
@@ -485,8 +428,8 @@ async def login(request: Request, payload: LoginRequest):
             detail="Account temporarily locked due to too many failed attempts. Try again after 15 minutes."
         )
     
-    # Get user from IPFS
-    user = ipfs_storage.get_user(payload.email)
+    # Get user from MongoDB
+    user = await mongo_storage.get_user(payload.email)
     if not user:
         update_failed_login(payload.email, False)
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -512,13 +455,15 @@ async def login(request: Request, payload: LoginRequest):
         role=UserRole(user["role"]),
         full_name=user["full_name"],
         email=user["email"],
-        ipfs_cid=user.get("ipfs_cid", ""),
+        storage_cid=user.get("storage_cid", ""),
         hash=user.get("hash", "")
     )
 
+
+# ============ GET CURRENT USER ============
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: dict = Depends(get_current_user)):
-    user = ipfs_storage.get_user(current_user["email"])
+    user = await mongo_storage.get_user(current_user["email"])
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return UserResponse(
@@ -527,6 +472,6 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         full_name=user["full_name"],
         role=UserRole(user["role"]),
         created_at=user["created_at"],
-        ipfs_cid=user.get("ipfs_cid", ""),
+        storage_cid=user.get("storage_cid", ""),
         hash=user.get("hash", "")
     )

@@ -1,3 +1,4 @@
+// frontend/src/pages/roles/Forensic/components/ForensicAcceptedCases.tsx
 import { useEffect, useState } from "react";
 import { apiRequest } from "../../../../shared/services/apiClient";
 
@@ -161,7 +162,7 @@ export function ForensicAcceptedCases({ token }: { token: string }) {
         </div>
       )}
 
-      {/* Case Details Modal - Same as pending cases */}
+      {/* Case Details Modal */}
       {showModal && selectedCase && (
         <div className="fac-modal-overlay" onClick={() => { setShowModal(false); setSelectedCase(null); }}>
           <div className="fac-modal fac-modal-large" onClick={(e) => e.stopPropagation()}>
@@ -208,9 +209,15 @@ export function ForensicAcceptedCases({ token }: { token: string }) {
                         </div>
                         <p className="fac-evidence-desc">{ev.description}</p>
                         <div className="fac-evidence-actions">
-                          {ev.ipfs_cid && (
+                          {/* Changed from IPFS to Cloudinary */}
+                          {ev.cloudinary_url && (
+                            <button className="fac-evidence-btn" onClick={() => window.open(ev.cloudinary_url, "_blank")}>
+                              📄 View Document
+                            </button>
+                          )}
+                          {!ev.cloudinary_url && ev.ipfs_cid && (
                             <button className="fac-evidence-btn" onClick={() => window.open(`https://dweb.link/ipfs/${ev.ipfs_cid}`, "_blank")}>
-                              📄 View
+                              📄 View (Legacy)
                             </button>
                           )}
                         </div>
@@ -308,8 +315,9 @@ export function ForensicAcceptedCases({ token }: { token: string }) {
         .fac-status-badge.accepted { background: rgba(16,185,129,0.15); color: #10b981; }
         .fac-status-badge.completed { background: rgba(59,130,246,0.15); color: #3b82f6; }
         .fac-evidence-desc { font-size: 0.75rem; color: #7a849c; margin-bottom: 12px; }
-        .fac-evidence-actions { display: flex; gap: 8px; }
-        .fac-evidence-btn { padding: 6px 12px; background: rgba(99,102,241,0.1); border: 1px solid rgba(99,102,241,0.2); border-radius: 6px; color: #818cf8; font-size: 0.7rem; cursor: pointer; }
+        .fac-evidence-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+        .fac-evidence-btn { padding: 6px 12px; background: rgba(99,102,241,0.1); border: 1px solid rgba(99,102,241,0.2); border-radius: 6px; color: #818cf8; font-size: 0.7rem; cursor: pointer; transition: all 0.2s; }
+        .fac-evidence-btn:hover { background: rgba(99,102,241,0.2); }
         .fac-timeline { position: relative; padding-left: 30px; }
         .fac-timeline-item { position: relative; padding-bottom: 20px; }
         .fac-timeline-dot { position: absolute; left: -22px; top: 4px; width: 10px; height: 10px; background: #6366f1; border-radius: 50%; border: 2px solid #818cf8; }

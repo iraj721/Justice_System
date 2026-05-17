@@ -1,3 +1,4 @@
+// frontend/src/pages/roles/Forensic/components/ForensicCaseQueue.tsx
 import { useEffect, useState } from "react";
 import { apiRequest } from "../../../../shared/services/apiClient";
 
@@ -469,7 +470,7 @@ export function ForensicCaseQueue({ token }: { token: string }) {
                 </div>
               )}
 
-              {/* Evidence List - IMPROVED */}
+              {/* Evidence List - IMPROVED with Cloudinary support */}
               <div className="fcq-section">
                 <h4>📦 Evidence ({selectedCase.evidence?.length || 0})</h4>
                 {selectedCase.evidence?.length === 0 ? (
@@ -513,7 +514,18 @@ export function ForensicCaseQueue({ token }: { token: string }) {
                           )}
                         </div>
                         <div className="fcq-evidence-actions">
-                          {ev.ipfs_cid && (
+                          {/* CHANGED: Cloudinary first, IPFS as fallback */}
+                          {ev.cloudinary_url && (
+                            <button
+                              className="fcq-evidence-btn"
+                              onClick={() =>
+                                window.open(ev.cloudinary_url, "_blank")
+                              }
+                            >
+                              📄 View Evidence
+                            </button>
+                          )}
+                          {!ev.cloudinary_url && ev.ipfs_cid && (
                             <button
                               className="fcq-evidence-btn"
                               onClick={() =>
@@ -523,7 +535,7 @@ export function ForensicCaseQueue({ token }: { token: string }) {
                                 )
                               }
                             >
-                              📄 View Evidence
+                              📄 View Evidence (Legacy)
                             </button>
                           )}
                           {ev.forensic_report && (
@@ -908,7 +920,7 @@ export function ForensicCaseQueue({ token }: { token: string }) {
           background: #475569;
         }
         
-        /* Modal Styles */
+        /* Modal Styles - continue... */
         .fcq-modal-overlay {
           position: fixed;
           top: 0;
@@ -976,7 +988,6 @@ export function ForensicCaseQueue({ token }: { token: string }) {
           border-top: 1px solid rgba(99,102,241,0.1);
         }
         
-        /* Section Styles */
         .fcq-section {
           margin-bottom: 28px;
         }
@@ -1014,7 +1025,6 @@ export function ForensicCaseQueue({ token }: { token: string }) {
           margin-right: 8px;
         }
         
-        /* Evidence Grid */
         .fcq-evidence-grid {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -1058,6 +1068,7 @@ export function ForensicCaseQueue({ token }: { token: string }) {
           display: flex;
           gap: 8px;
           margin-top: 8px;
+          flex-wrap: wrap;
         }
         
         .fcq-evidence-btn {
@@ -1068,9 +1079,13 @@ export function ForensicCaseQueue({ token }: { token: string }) {
           color: #818cf8;
           font-size: 0.7rem;
           cursor: pointer;
+          transition: all 0.2s;
         }
         
-        /* Timeline */
+        .fcq-evidence-btn:hover {
+          background: rgba(99,102,241,0.2);
+        }
+        
         .fcq-timeline-full {
           position: relative;
           padding-left: 30px;

@@ -1,20 +1,21 @@
+# backend/app/api/case_timeline.py
 from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime, timezone
 from app.core.authz import get_current_user
-from app.services.ipfs_storage import ipfs_storage
+from app.services.mongo_storage import mongo_storage
 
 router = APIRouter(prefix="/case-timeline", tags=["Case Timeline"])
 
 @router.get("/{case_id}")
 async def get_complete_case_timeline(case_id: str, current_user: dict = Depends(get_current_user)):
     """Get complete timeline for a case including all activities"""
-    case = ipfs_storage.get_case(case_id)
+    case = await mongo_storage.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
     print(f"🔍 DEBUG: Case {case_id} has timeline: {case.get('timeline', [])}")
     
-    fir = ipfs_storage.get_fir(case.get("fir_id"))
+    fir = await mongo_storage.get_fir(case.get("fir_id"))
     current_user_role = current_user.get("role")
     current_user_email = current_user.get("email")
     
@@ -84,9 +85,9 @@ async def get_complete_case_timeline(case_id: str, current_user: dict = Depends(
             })
     
     # Get all evidence for this case
-    all_evidence = ipfs_storage.get_all_evidence()
+    all_evidence = await mongo_storage.get_all_evidence()
     case_evidence = [ev for ev in all_evidence if ev.get("case_id") == case_id]
-    forensic_reports = ipfs_storage.get_forensic_reports()
+    forensic_reports = await mongo_storage.get_forensic_reports()
     
     # ============ 1. FIR SUBMISSION ============
     if fir and fir.get("created_at"):
@@ -202,7 +203,7 @@ async def get_complete_case_timeline(case_id: str, current_user: dict = Depends(
             })
     
     # ============ 9. FEEDBACK EVENTS ============
-    all_feedback = ipfs_storage.get_all_feedback()
+    all_feedback = await mongo_storage.get_all_feedback()
     case_feedback = [f for f in all_feedback if f.get("case_id") == case_id]
     
     for feedback in case_feedback:
@@ -225,7 +226,7 @@ async def get_complete_case_timeline(case_id: str, current_user: dict = Depends(
         })
     
     # ============ 10. SHARE CASE EVENTS ============
-    shares = ipfs_storage.get_case_shares(case_id)
+    shares = await mongo_storage.get_case_shares(case_id)
     for share_id, share in shares.items():
         add_event({
             "date": share.get("created_at"),
@@ -242,8 +243,7 @@ async def get_complete_case_timeline(case_id: str, current_user: dict = Depends(
         })
     
     # ============ 11. SOS EVENTS ============
-    emergency_data = ipfs_storage._load_file(ipfs_storage.emergency_file)
-    sos_records = emergency_data.get("sos_records", {})
+    sos_records = await mongo_storage.get_all_sos_records()
     
     for sos_id, sos in sos_records.items():
         if sos.get("case_id") == case_id:
@@ -274,7 +274,7 @@ async def get_complete_case_timeline(case_id: str, current_user: dict = Depends(
             "type": "case_level"
         })
     
-    # ============ 13. FORENSIC REPORT GENERATED (FIXED - NO DUPLICATES) ============
+    # ============ 13. FORENSIC REPORT GENERATED ============
     added_report_ids = set()
     
     for ev in case_evidence:
@@ -300,7 +300,7 @@ async def get_complete_case_timeline(case_id: str, current_user: dict = Depends(
                 })
                 added_report_ids.add(report_id)
     
-    # ============ 14. FORENSIC REPORT SHARED (FIXED - NO DUPLICATES) ============
+    # ============ 14. FORENSIC REPORT SHARED ============
     added_share_keys = set()
     
     # From forensic_reports
@@ -373,7 +373,7 @@ async def get_complete_case_timeline(case_id: str, current_user: dict = Depends(
         })
     
     # ============ 16. COURT HEARING SCHEDULED ============
-    hearings = ipfs_storage.get_case_hearings(case_id)
+    hearings = await mongo_storage.get_case_hearings(case_id)
     for hearing_id, hearing in hearings.items():
         if hearing.get("created_at"):
             add_event({

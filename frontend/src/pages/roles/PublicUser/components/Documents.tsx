@@ -10,7 +10,7 @@ type Document = {
   doc_type: string;
   filename: string;
   file_size: number;
-  ipfs_cid: string;
+  cloudinary_url: string;
   uploaded_at: string;
 };
 
@@ -91,6 +91,7 @@ export function Documents({ token }: { token: string }) {
       ]);
     }
   }
+  
   async function loadUserCases() {
     try {
       const firs = await apiRequest<any[]>("/user/my-firs", { token });
@@ -123,7 +124,6 @@ export function Documents({ token }: { token: string }) {
         },
       );
 
-      // Success popup - ACHA SA MSG!
       showToast(
         `✅ ${result.message || "Document submitted successfully to case!"}`,
         "success",
@@ -154,8 +154,7 @@ export function Documents({ token }: { token: string }) {
     try {
       const formData = new FormData();
       formData.append("title", title);
-      // IMPORTANT: Send empty string instead of null/undefined
-      formData.append("description", description || ""); // FIX: Always send description
+      formData.append("description", description || "");
       formData.append("doc_type", docType);
       formData.append("file", selectedFile);
 
@@ -306,7 +305,7 @@ export function Documents({ token }: { token: string }) {
           <div className="doc-form-header">
             <h2>Upload Document</h2>
             <p>
-              Upload important documents securely to IPFS blockchain storage
+              Upload important documents securely to Cloudinary cloud storage
             </p>
           </div>
 
@@ -436,11 +435,11 @@ export function Documents({ token }: { token: string }) {
               {uploading ? (
                 <>
                   <span className="doc-spinner"></span>
-                  Uploading to IPFS...
+                  Uploading to Cloudinary...
                 </>
               ) : (
                 <>
-                  <span>📤 Upload to Blockchain</span>
+                  <span>📤 Upload Document</span>
                 </>
               )}
             </button>
@@ -450,10 +449,9 @@ export function Documents({ token }: { token: string }) {
           <div className="doc-security">
             <div className="doc-security-icon">🔒</div>
             <div className="doc-security-content">
-              <strong>Blockchain Secured</strong>
+              <strong>Secure Cloud Storage</strong>
               <p>
-                All documents are encrypted and stored on IPFS with blockchain
-                verification
+                All documents are securely stored on Cloudinary with cryptographic hash verification
               </p>
             </div>
           </div>
@@ -465,7 +463,7 @@ export function Documents({ token }: { token: string }) {
         <div className="doc-list-container doc-fade-up">
           <div className="doc-list-header">
             <h2>My Documents</h2>
-            <p>All your blockchain-secured documents</p>
+            <p>All your securely stored documents</p>
           </div>
 
           {documents.length === 0 ? (
@@ -530,7 +528,7 @@ export function Documents({ token }: { token: string }) {
 
                   <details className="doc-details">
                     <summary className="doc-details-summary">
-                      <span>🔗 IPFS Details</span>
+                      <span>🔗 Document Details</span>
                     </summary>
                     <div className="doc-details-content">
                       <div className="doc-detail-row">
@@ -538,8 +536,10 @@ export function Documents({ token }: { token: string }) {
                         <span className="doc-detail-value">{doc.filename}</span>
                       </div>
                       <div className="doc-detail-row">
-                        <span className="doc-detail-label">CID:</span>
-                        <code className="doc-cid">{doc.ipfs_cid}</code>
+                        <span className="doc-detail-label">URL:</span>
+                        <a href={doc.cloudinary_url} target="_blank" rel="noopener noreferrer" className="doc-url">
+                          View Document
+                        </a>
                       </div>
                     </div>
                   </details>
@@ -1206,11 +1206,15 @@ export function Documents({ token }: { token: string }) {
           color: #7a849c;
         }
 
-        .doc-cid {
+        .doc-url {
           font-size: 0.7rem;
-          font-family: monospace;
           color: #818cf8;
           word-break: break-all;
+          text-decoration: none;
+        }
+
+        .doc-url:hover {
+          text-decoration: underline;
         }
 
         /* Message */
@@ -1328,123 +1332,124 @@ export function Documents({ token }: { token: string }) {
         }
 
         /* Submit Document to Case */
-.doc-submit-section {
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(99, 102, 241, 0.1);
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  align-items: center;
-}
+        .doc-submit-section {
+          margin-top: 16px;
+          padding-top: 12px;
+          border-top: 1px solid rgba(99, 102, 241, 0.1);
+          display: flex;
+          gap: 12px;
+          flex-wrap: wrap;
+          align-items: center;
+        }
 
-.doc-case-select {
-  flex: 1;
-  padding: 8px 12px;
-  background: rgba(7, 9, 14, 0.6);
-  border: 1px solid rgba(99, 102, 241, 0.15);
-  border-radius: 8px;
-  color: #e8ecf8;
-  font-size: 0.8rem;
-  cursor: pointer;
-}
+        .doc-case-select {
+          flex: 1;
+          padding: 8px 12px;
+          background: rgba(7, 9, 14, 0.6);
+          border: 1px solid rgba(99, 102, 241, 0.15);
+          border-radius: 8px;
+          color: #e8ecf8;
+          font-size: 0.8rem;
+          cursor: pointer;
+        }
 
-.doc-case-select:focus {
-  outline: none;
-  border-color: #6366f1;
-}
+        .doc-case-select:focus {
+          outline: none;
+          border-color: #6366f1;
+        }
 
-.doc-submit-btn-small {
-  padding: 8px 16px;
-  background: linear-gradient(135deg, #6366f1, #4f46e5);
-  border: none;
-  border-radius: 6px;
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: #fff;
-  cursor: pointer;
-  transition: all 0.2s;
-}
+        .doc-submit-btn-small {
+          padding: 8px 16px;
+          background: linear-gradient(135deg, #6366f1, #4f46e5);
+          border: none;
+          border-radius: 6px;
+          font-size: 0.75rem;
+          font-weight: 500;
+          color: #fff;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
 
-.doc-submit-btn-small:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
-}
+        .doc-submit-btn-small:hover:not(:disabled) {
+          transform: translateY(-1px);
+          box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+        }
 
-.doc-submit-btn-small:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-  /* ============ TOAST POPUP STYLES ============ */
-.doc-toast {
-  position: fixed;
-  top: 90px;
-  right: 20px;
-  z-index: 1000;
-  background: rgba(12, 15, 26, 0.95);
-  backdrop-filter: blur(12px);
-  border-radius: 12px;
-  padding: 14px 20px;
-  min-width: 280px;
-  max-width: 350px;
-  animation: doc-toast-slide 0.3s ease-out;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
-}
+        .doc-submit-btn-small:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+        
+        /* Toast Popup Styles */
+        .doc-toast {
+          position: fixed;
+          top: 90px;
+          right: 20px;
+          z-index: 1000;
+          background: rgba(12, 15, 26, 0.95);
+          backdrop-filter: blur(12px);
+          border-radius: 12px;
+          padding: 14px 20px;
+          min-width: 280px;
+          max-width: 350px;
+          animation: doc-toast-slide 0.3s ease-out;
+          box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
 
-@keyframes doc-toast-slide {
-  from {
-    opacity: 0;
-    transform: translateX(30px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
+        @keyframes doc-toast-slide {
+          from {
+            opacity: 0;
+            transform: translateX(30px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0);
+          }
+        }
 
-.doc-toast-inner {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
+        .doc-toast-inner {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
 
-.doc-toast-icon {
-  font-size: 1.2rem;
-}
+        .doc-toast-icon {
+          font-size: 1.2rem;
+        }
 
-.doc-toast-message {
-  font-size: 0.85rem;
-  color: #e8ecf8;
-  line-height: 1.4;
-  flex: 1;
-}
+        .doc-toast-message {
+          font-size: 0.85rem;
+          color: #e8ecf8;
+          line-height: 1.4;
+          flex: 1;
+        }
 
-.doc-toast-success {
-  border-left: 3px solid #10b981;
-}
+        .doc-toast-success {
+          border-left: 3px solid #10b981;
+        }
 
-.doc-toast-success .doc-toast-icon {
-  color: #10b981;
-}
+        .doc-toast-success .doc-toast-icon {
+          color: #10b981;
+        }
 
-.doc-toast-error {
-  border-left: 3px solid #ef4444;
-}
+        .doc-toast-error {
+          border-left: 3px solid #ef4444;
+        }
 
-.doc-toast-error .doc-toast-icon {
-  color: #ef4444;
-}
+        .doc-toast-error .doc-toast-icon {
+          color: #ef4444;
+        }
 
-/* Mobile responsive */
-@media (max-width: 768px) {
-  .doc-toast {
-    top: auto;
-    bottom: 80px;
-    right: 10px;
-    left: 10px;
-    max-width: none;
-  }
-}
+        /* Mobile responsive */
+        @media (max-width: 768px) {
+          .doc-toast {
+            top: auto;
+            bottom: 80px;
+            right: 10px;
+            left: 10px;
+            max-width: none;
+          }
+        }
       `}</style>
     </div>
   );

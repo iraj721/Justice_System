@@ -458,7 +458,7 @@ export function Feedback({ token }: { token: string }) {
                 <li>✓ Selecting a case sends feedback to the investigator</li>
                 <li>✓ Feedback appears in case timeline for complete record</li>
                 <li>✓ Investigator can respond to your feedback</li>
-                <li>✓ All feedback is stored securely on IPFS</li>
+                <li>✓ All feedback is stored securely in MongoDB database</li>
               </ul>
             </div>
           </div>

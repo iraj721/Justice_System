@@ -5,28 +5,25 @@ from datetime import datetime, timezone
 from typing import Optional, List
 import uuid
 import hashlib
-import requests
 import json
 from io import BytesIO
+from app.services.cloudinary_service import cloudinary_service
 from app.core.authz import require_roles, get_current_user
 from app.core.roles import UserRole
 from app.core.config import settings
-from app.services.ipfs_storage import ipfs_storage
-from app.core.ipfs_client import ipfs_client
-from app.services.chain_anchor import anchor_sha256
+from app.services.mongo_storage import mongo_storage
 from app.services.encryption_service import encryption_service
 from app.api.websocket import notify_case_update
-from app.services.chain_anchor import (
-    anchor_sha256, 
-    approve_multisig, 
-    get_approval_status,
-    file_appeal,
-    get_appeal,
-    deposit_escrow,
-    release_fine,
-    get_escrow,
-    update_case_timeline
-)
+
+# Blockchain functions removed - using simple stubs
+def approve_multisig(*args, **kwargs): return None
+def get_approval_status(*args, **kwargs): return {}
+def file_appeal(*args, **kwargs): return None
+def get_appeal(*args, **kwargs): return {}
+def deposit_escrow(*args, **kwargs): return None
+def release_fine(*args, **kwargs): return None
+def get_escrow(*args, **kwargs): return {}
+def update_case_timeline(*args, **kwargs): return None
 
 # PDF libraries
 try:
@@ -92,7 +89,7 @@ class EvidenceCreateRequest(BaseModel):
     case_id: str
     title: str
     description: str
-    ipfs_cid: str
+    cloudinary_url: str
     file_hash: str
 
 class EvidenceVerifyRequest(BaseModel):
@@ -105,23 +102,14 @@ class SubmitToCourtRequest(BaseModel):
 class SubmitToForensicRequest(BaseModel):
     forensic_email: str
 
-async def get_file_hash_from_ipfs(cid: str) -> str:
-    try:
-        response = requests.get(f"{settings.IPFS_GATEWAY_URL}/ipfs/{cid}", timeout=30)
-        response.raise_for_status()
-        return hashlib.sha256(response.content).hexdigest()
-    except Exception as e:
-        print(f"Error getting file from IPFS: {e}")
-        return ""
 
-# backend/app/api/cases.py - UPDATE the create_case endpoint
-
+# ============ CREATE CASE ============
 @router.post("/", response_model=CaseResponse)
 async def create_case(
     payload: CaseCreateRequest,
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))
 ):
-    fir = ipfs_storage.get_fir(payload.fir_id)
+    fir = await mongo_storage.get_fir(payload.fir_id)
     if not fir:
         raise HTTPException(status_code=404, detail="FIR not found")
     
@@ -129,7 +117,7 @@ async def create_case(
     case_number = f"JUSTICE-CASE-{datetime.now().year}-{uuid.uuid4().hex[:6].upper()}"
     
     # Get full user details for investigator name
-    investigator_user = ipfs_storage.get_user(current_user["email"])
+    investigator_user = await mongo_storage.get_user(current_user["email"])
     investigator_name = investigator_user.get("full_name", current_user.get("full_name", current_user["email"]))
     
     case_data = {
@@ -141,7 +129,7 @@ async def create_case(
         "priority": payload.priority,
         "status": "UNDER_INVESTIGATION",
         "investigator_email": current_user["email"],
-        "investigator_name": investigator_name,  # FIXED: Now using actual name
+        "investigator_name": investigator_name,
         "investigator_phone": investigator_user.get("phone_number", ""),
         "suspects": [],
         "witnesses": [],
@@ -156,28 +144,17 @@ async def create_case(
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
     
-    try:
-        case_cid = await ipfs_client.upload_json(case_data)
-        case_hash = ipfs_client.generate_hash(case_data)
-        case_data["ipfs_cid"] = case_cid
-        case_data["hash"] = case_hash
-    except Exception as e:
-        print(f"IPFS upload failed for case: {e}")
-        case_data["ipfs_cid"] = "UPLOAD_FAILED"
-        case_data["hash"] = ipfs_client.generate_hash(case_data)
+    # Generate hash for case
+    case_hash = hashlib.sha256(json.dumps(case_data, default=str).encode()).hexdigest()
+    case_data["hash"] = case_hash
+    case_data["ipfs_cid"] = "STORED_IN_MONGODB"
     
-    ipfs_storage.save_case(case_id, case_data)
-    anchor_sha256(
-        object_type="CASE",
-        object_id=case_id,
-        sha256_hex=case_data.get("hash", ""),
-        ipfs_cid=case_data.get("ipfs_cid", ""),
-    )
+    await mongo_storage.save_case(case_id, case_data)
     
     fir["status"] = "ACCEPTED"
     fir["assigned_investigator"] = current_user["email"]
     fir["case_id"] = case_id
-    ipfs_storage.update_fir(payload.fir_id, fir)
+    await mongo_storage.update_fir(payload.fir_id, fir)
     
     return CaseResponse(
         case_id=case_id,
@@ -194,12 +171,14 @@ async def create_case(
         hash=case_data.get("hash", "")
     )
 
+
+# ============ ADD EVIDENCE ============
 @router.post("/evidence")
 async def add_evidence(
-    payload: EvidenceCreateRequest,
+    payload: EvidenceCreateRequest,  # This will now accept cloudinary_url
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))
 ):
-    case = ipfs_storage.get_case(payload.case_id)
+    case = await mongo_storage.get_case(payload.case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
@@ -210,7 +189,7 @@ async def add_evidence(
         "case_id": payload.case_id,
         "title": payload.title,
         "description": payload.description,
-        "ipfs_cid": payload.ipfs_cid,
+        "cloudinary_url": payload.cloudinary_url,  # Changed from ipfs_cid
         "hash": payload.file_hash,
         "created_by": current_user["email"],
         "status": "COLLECTED",
@@ -218,24 +197,18 @@ async def add_evidence(
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
     
-    ipfs_storage.save_evidence(evidence_id, evidence_data)
-    anchor_sha256(
-        object_type="EVIDENCE",
-        object_id=evidence_id,
-        sha256_hex=evidence_data.get("hash", ""),
-        ipfs_cid=evidence_data.get("ipfs_cid", ""),
-    )
+    await mongo_storage.save_evidence(evidence_id, evidence_data)
     
     if "evidence" not in case:
         case["evidence"] = []
     case["evidence"].append(evidence_id)
     case["updated_at"] = datetime.now(timezone.utc).isoformat()
-    ipfs_storage.update_case(payload.case_id, case)
+    await mongo_storage.update_case(payload.case_id, case)
     
     return {
         "evidence_id": evidence_id,
         "hash": payload.file_hash,
-        "ipfs_cid": payload.ipfs_cid,
+        "cloudinary_url": payload.cloudinary_url,  # Changed
         "title": payload.title,
         "case_id": payload.case_id,
         "status": "COLLECTED",
@@ -244,6 +217,7 @@ async def add_evidence(
     }
 
 
+# ============ UPLOAD EVIDENCE FILE (CLOUDINARY) ============
 @router.post("/evidence/upload-file")
 async def add_evidence_upload_file(
     case_id: str = Form(...),
@@ -252,77 +226,82 @@ async def add_evidence_upload_file(
     file: UploadFile = File(...),
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR)),
 ):
-    """Upload evidence file to IPFS and register metadata (same fields as JSON /evidence flow)."""
-    case = ipfs_storage.get_case(case_id)
+    """Upload evidence file to Cloudinary and register metadata"""
+    case = await mongo_storage.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
     content = await file.read()
+    if len(content) > 50 * 1024 * 1024:  # 50MB limit
+        raise HTTPException(status_code=400, detail="File too large. Maximum size is 50MB")
     file_hash = hashlib.sha256(content).hexdigest()
-    result = await ipfs_client.upload_file(content, file.filename or "evidence.bin")
-    cid = result["cid"]
+    
+    # Upload to Cloudinary (instead of IPFS)
+    cloudinary_result = await cloudinary_service.upload_file(
+        content, 
+        file.filename or "evidence.bin",
+        folder=f"evidence/{case_id}"
+    )
+    
+    if not cloudinary_result.get("url"):
+        raise HTTPException(status_code=500, detail="Cloudinary upload failed")
+    
     evidence_id = f"EVD-{uuid.uuid4().hex[:10].upper()}"
     now = datetime.now(timezone.utc).isoformat()
+    
     evidence_data = {
         "evidence_id": evidence_id,
         "case_id": case_id,
         "title": title,
         "description": description,
-        "ipfs_cid": cid,
+        "cloudinary_url": cloudinary_result["url"],
+        "cloudinary_public_id": cloudinary_result["public_id"],
         "hash": file_hash,
         "file_size": len(content),
         "mime_type": file.content_type or "application/octet-stream",
         "original_filename": file.filename or "evidence.bin",
-        "pinned_at": now,
-        "gateway_url": result.get("gateway_url"),
         "created_by": current_user["email"],
         "status": "COLLECTED",
         "created_at": now,
         "updated_at": now,
     }
 
-    ipfs_storage.save_evidence(evidence_id, evidence_data)
+    await mongo_storage.save_evidence(evidence_id, evidence_data)
+    
     if "evidence" not in case:
         case["evidence"] = []
     case["evidence"].append(evidence_id)
     case["updated_at"] = now
-    ipfs_storage.update_case(case_id, case)
-    anchor_sha256(
-        object_type="EVIDENCE",
-        object_id=evidence_id,
-        sha256_hex=evidence_data.get("hash", ""),
-        ipfs_cid=evidence_data.get("ipfs_cid", ""),
-    )
+    await mongo_storage.update_case(case_id, case)
 
     return {
         "evidence_id": evidence_id,
         "hash": file_hash,
-        "ipfs_cid": cid,
+        "cloudinary_url": cloudinary_result["url"],
         "title": title,
         "case_id": case_id,
         "status": "COLLECTED",
         "created_at": evidence_data["created_at"],
-        "message": "Evidence uploaded to IPFS and registered successfully",
+        "message": "Evidence uploaded to Cloudinary successfully",
     }
 
 
+# ============ VERIFY EVIDENCE BY FILE ============
 @router.post("/evidence/verify-by-file")
 async def verify_evidence_by_file(
     evidence_id: str,
     file: UploadFile = File(...),
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR, UserRole.FORENSIC_ANALYST, UserRole.COURT))
 ):
-    evidence = ipfs_storage.get_evidence(evidence_id)
+    evidence = await mongo_storage.get_evidence(evidence_id)
     if not evidence:
         raise HTTPException(status_code=404, detail="Evidence not found")
     
     stored_hash = evidence.get("hash")
-    stored_cid = evidence.get("ipfs_cid", "N/A")
     stored_title = evidence.get("title", "N/A")
     
     file_content = await file.read()
     uploaded_file_name = file.filename
-    uploaded_file_size = len(file_content)
     uploaded_hash = hashlib.sha256(file_content).hexdigest()
     is_valid = uploaded_hash == stored_hash
     
@@ -330,7 +309,6 @@ async def verify_evidence_by_file(
         "verified_at": datetime.now(timezone.utc).isoformat(),
         "verified_by": current_user["email"],
         "uploaded_file_name": uploaded_file_name,
-        "uploaded_file_size": uploaded_file_size,
         "uploaded_hash": uploaded_hash,
         "stored_hash": stored_hash,
         "result": is_valid
@@ -339,7 +317,7 @@ async def verify_evidence_by_file(
     if "verifications" not in evidence:
         evidence["verifications"] = []
     evidence["verifications"].append(verification_record)
-    ipfs_storage.save_evidence(evidence_id, evidence)
+    await mongo_storage.save_evidence(evidence_id, evidence)
     
     return {
         "evidence_id": evidence_id,
@@ -348,27 +326,29 @@ async def verify_evidence_by_file(
         "uploaded_file_name": uploaded_file_name,
         "uploaded_hash": uploaded_hash,
         "stored_hash": stored_hash,
-        "stored_cid": stored_cid,
         "message": "✅ FILE IS AUTHENTIC!" if is_valid else "❌ FILE IS TAMPERED!",
-        "verification_time": verification_record["verified_at"],
-        "match_percentage": 100 if is_valid else 0
+        "verification_time": verification_record["verified_at"]
     }
 
+
+# ============ GET INVESTIGATOR EVIDENCE ============
 @router.get("/evidence/investigator")
 async def get_investigator_evidence(current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
-    all_cases = ipfs_storage.get_all_cases()
+    all_cases = await mongo_storage.get_all_cases()
     investigator_case_ids = [case["case_id"] for case in all_cases if case.get("investigator_email") == current_user["email"]]
-    all_evidence = ipfs_storage.get_all_evidence()
+    all_evidence = await mongo_storage.get_all_evidence()
     evidence = [e for e in all_evidence if e.get("case_id") in investigator_case_ids]
     evidence.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     return evidence
 
+
+# ============ GET CASE EVIDENCE LIST ============
 @router.get("/evidence/case/{case_id}")
 async def get_case_evidence_list(
     case_id: str,
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))
 ):
-    case = ipfs_storage.get_case(case_id)
+    case = await mongo_storage.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     if case.get("investigator_email") != current_user["email"]:
@@ -377,7 +357,7 @@ async def get_case_evidence_list(
     evidence_ids = case.get("evidence", [])
     evidence_list = []
     for ev_id in evidence_ids:
-        ev = ipfs_storage.get_evidence(ev_id)
+        ev = await mongo_storage.get_evidence(ev_id)
         if ev:
             evidence_list.append({
                 "evidence_id": ev["evidence_id"],
@@ -389,22 +369,26 @@ async def get_case_evidence_list(
             })
     return evidence_list
 
+
+# ============ GET EVIDENCE BY ID ============
 @router.get("/evidence/{evidence_id}")
 async def get_evidence(
     evidence_id: str,
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR, UserRole.FORENSIC_ANALYST, UserRole.COURT))
 ):
-    evidence = ipfs_storage.get_evidence(evidence_id)
+    evidence = await mongo_storage.get_evidence(evidence_id)
     if not evidence:
         raise HTTPException(status_code=404, detail="Evidence not found")
     return evidence
 
+
+# ============ VERIFY EVIDENCE BY HASH ============
 @router.post("/evidence/verify")
 async def verify_evidence(
     payload: EvidenceVerifyRequest,
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR, UserRole.FORENSIC_ANALYST, UserRole.COURT))
 ):
-    evidence = ipfs_storage.get_evidence(payload.evidence_id)
+    evidence = await mongo_storage.get_evidence(payload.evidence_id)
     if not evidence:
         raise HTTPException(status_code=404, detail="Evidence not found")
     
@@ -422,7 +406,7 @@ async def verify_evidence(
     if "verifications" not in evidence:
         evidence["verifications"] = []
     evidence["verifications"].append(verification_record)
-    ipfs_storage.save_evidence(payload.evidence_id, evidence)
+    await mongo_storage.save_evidence(payload.evidence_id, evidence)
     
     return {
         "evidence_id": payload.evidence_id,
@@ -433,24 +417,14 @@ async def verify_evidence(
         "verification_time": verification_record["verified_at"]
     }
 
-@router.get("/debug/all-cids")
-async def get_all_cids(current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
-    all_cases = ipfs_storage.get_all_cases()
-    all_evidence = ipfs_storage.get_all_evidence()
-    all_firs = ipfs_storage.get_all_firs()
-    
-    return {
-        "cases": [{"case_id": c.get("case_id"), "case_number": c.get("case_number"), "ipfs_cid": c.get("ipfs_cid", "NOT_UPLOADED"), "hash": c.get("hash", "NOT_GENERATED")} for c in all_cases],
-        "evidence": [{"evidence_id": e.get("evidence_id"), "title": e.get("title"), "ipfs_cid": e.get("ipfs_cid", "NOT_UPLOADED"), "hash": e.get("hash", "NOT_GENERATED")} for e in all_evidence],
-        "firs": [{"fir_id": f.get("fir_id"), "fir_number": f.get("fir_number"), "ipfs_cid": f.get("ipfs_cid", "NOT_UPLOADED"), "hash": f.get("hash", "NOT_GENERATED")} for f in all_firs]
-    }
 
+# ============ ADD SUSPECT ============
 @router.post("/suspects")
 async def add_suspect(
     payload: SuspectAddRequest,
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))
 ):
-    case = ipfs_storage.get_case(payload.case_id)
+    case = await mongo_storage.get_case(payload.case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
@@ -468,16 +442,18 @@ async def add_suspect(
     
     case["suspects"].append(suspect)
     case["updated_at"] = datetime.now(timezone.utc).isoformat()
-    ipfs_storage.update_case(payload.case_id, case)
+    await mongo_storage.update_case(payload.case_id, case)
     
     return {"status": "success", "suspect": suspect}
 
+
+# ============ ADD WITNESS ============
 @router.post("/witnesses")
 async def add_witness(
     payload: WitnessAddRequest,
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))
 ):
-    case = ipfs_storage.get_case(payload.case_id)
+    case = await mongo_storage.get_case(payload.case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
@@ -493,99 +469,106 @@ async def add_witness(
     
     case["witnesses"].append(witness)
     case["updated_at"] = datetime.now(timezone.utc).isoformat()
-    ipfs_storage.update_case(payload.case_id, case)
+    await mongo_storage.update_case(payload.case_id, case)
     
     return {"status": "success", "witness": witness}
 
+
+# ============ GET INVESTIGATOR CASES ============
 @router.get("/investigator")
 async def get_investigator_cases(current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
-    all_cases = ipfs_storage.get_all_cases()
+    all_cases = await mongo_storage.get_all_cases()
     cases = [c for c in all_cases if c.get("investigator_email") == current_user["email"]]
     return sorted(cases, key=lambda x: x.get("created_at", ""), reverse=True)
 
+
+# ============ TRANSFER TO FORENSIC ============
 @router.post("/evidence/transfer/forensic/{evidence_id}")
 async def transfer_to_forensic(
     evidence_id: str,
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))
 ):
-    evidence = ipfs_storage.get_evidence(evidence_id)
+    evidence = await mongo_storage.get_evidence(evidence_id)
     if not evidence:
         raise HTTPException(status_code=404, detail="Evidence not found")
     
     evidence["status"] = "TRANSFERRED_TO_FORENSIC"
     evidence["transferred_at"] = datetime.now(timezone.utc).isoformat()
     evidence["transferred_by"] = current_user["email"]
-    ipfs_storage.save_evidence(evidence_id, evidence)
+    await mongo_storage.save_evidence(evidence_id, evidence)
     
     return {"status": "ok", "evidence_id": evidence_id}
 
+
+# ============ TRANSFER TO COURT ============
 @router.post("/evidence/transfer/court/{evidence_id}")
 async def transfer_to_court(
     evidence_id: str,
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))
 ):
-    evidence = ipfs_storage.get_evidence(evidence_id)
+    evidence = await mongo_storage.get_evidence(evidence_id)
     if not evidence:
         raise HTTPException(status_code=404, detail="Evidence not found")
     
     evidence["status"] = "SUBMITTED_TO_COURT"
     evidence["transferred_to_court_at"] = datetime.now(timezone.utc).isoformat()
     evidence["transferred_by"] = current_user["email"]
-    ipfs_storage.save_evidence(evidence_id, evidence)
+    await mongo_storage.save_evidence(evidence_id, evidence)
     
-    case = ipfs_storage.get_case(evidence["case_id"])
+    case = await mongo_storage.get_case(evidence["case_id"])
     if case:
         case["status"] = "UNDER_COURT_REVIEW"
-        ipfs_storage.update_case(evidence["case_id"], case)
+        await mongo_storage.update_case(evidence["case_id"], case)
     
     return {"status": "ok", "evidence_id": evidence_id}
 
+
+# ============ GET CASE BY ID ============
 @router.get("/{case_id}")
 async def get_case(case_id: str, current_user: dict = Depends(get_current_user)):
-    case = ipfs_storage.get_case(case_id)
+    case = await mongo_storage.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     return case
 
+
+# ============ GET CASE EVIDENCE ============
 @router.get("/{case_id}/evidence")
 async def get_case_evidence(
     case_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    case = ipfs_storage.get_case(case_id)
+    case = await mongo_storage.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
     evidence_ids = case.get("evidence", [])
     evidence_list = []
     for ev_id in evidence_ids:
-        ev = ipfs_storage.get_evidence(ev_id)
+        ev = await mongo_storage.get_evidence(ev_id)
         if ev:
             evidence_list.append(ev)
     
     return evidence_list
 
-@router.get("/debug/all-evidence")
-async def debug_all_evidence(current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
-    all_evidence = ipfs_storage.get_all_evidence()
-    return {"count": len(all_evidence), "evidence": all_evidence}
 
+# ============ GENERATE INVESTIGATION REPORT ============
 @router.get("/generate-report/{case_id}")
 async def generate_investigation_report(
     case_id: str,
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))
 ):
-    case = ipfs_storage.get_case(case_id)
+    case = await mongo_storage.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
     evidence_list = []
     for ev_id in case.get("evidence", []):
-        ev = ipfs_storage.get_evidence(ev_id)
+        ev = await mongo_storage.get_evidence(ev_id)
         if ev:
             evidence_list.append(ev)
     
-    fir = ipfs_storage.get_fir(case.get("fir_id"))
+    fir = await mongo_storage.get_fir(case.get("fir_id"))
     
     report = {
         "report_id": f"REP-{uuid.uuid4().hex[:8].upper()}",
@@ -607,15 +590,9 @@ async def generate_investigation_report(
             "fir_number": fir.get("fir_number") if fir else None,
             "complainant_name": fir.get("complainant_name") if fir else None,
             "complainant_contact": fir.get("complainant_contact") if fir else None,
-            "complainant_address": fir.get("complainant_address") if fir else None,
             "incident_title": fir.get("incident_title") if fir else None,
             "incident_description": fir.get("incident_description") if fir else None,
             "incident_location": fir.get("incident_location") if fir else None,
-            "incident_datetime": fir.get("incident_datetime") if fir else None,
-            "accused_person": fir.get("accused_person") if fir else None,
-            "accused_description": fir.get("accused_description") if fir else None,
-            "witness_names": fir.get("witness_names") if fir else None,
-            "witness_contact": fir.get("witness_contact") if fir else None
         },
         "suspects": case.get("suspects", []),
         "witnesses": case.get("witnesses", []),
@@ -647,9 +624,11 @@ async def generate_investigation_report(
         }
     }
     
-    ipfs_storage.save_report(report["report_id"], report)
+    await mongo_storage.save_report(report["report_id"], report)
     return report
 
+
+# ============ DOWNLOAD REPORT ============
 @router.get("/download-report/{case_id}")
 async def download_investigation_report(
     case_id: str,
@@ -658,17 +637,17 @@ async def download_investigation_report(
 ):
     """Download investigation report in PDF, DOCX, or TXT format"""
     
-    case = ipfs_storage.get_case(case_id)
+    case = await mongo_storage.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
     evidence_list = []
     for ev_id in case.get("evidence", []):
-        ev = ipfs_storage.get_evidence(ev_id)
+        ev = await mongo_storage.get_evidence(ev_id)
         if ev:
             evidence_list.append(ev)
     
-    fir = ipfs_storage.get_fir(case.get("fir_id"))
+    fir = await mongo_storage.get_fir(case.get("fir_id"))
     
     report_data = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -686,13 +665,9 @@ async def download_investigation_report(
         "fir_details": {
             "fir_number": fir.get("fir_number") if fir else None,
             "complainant_name": fir.get("complainant_name") if fir else None,
-            "complainant_contact": fir.get("complainant_contact") if fir else None,
             "incident_title": fir.get("incident_title") if fir else None,
             "incident_description": fir.get("incident_description") if fir else None,
             "incident_location": fir.get("incident_location") if fir else None,
-            "incident_datetime": fir.get("incident_datetime") if fir else None,
-            "accused_person": fir.get("accused_person") if fir else None,
-            "witness_names": fir.get("witness_names") if fir else None
         },
         "suspects": case.get("suspects", []),
         "witnesses": case.get("witnesses", []),
@@ -717,9 +692,10 @@ async def download_investigation_report(
     else:
         return await generate_txt_report(report_data, case_number)
 
+
 async def generate_pdf_report(data: dict, case_number: str) -> Response:
     if not REPORTLAB_AVAILABLE:
-        raise HTTPException(status_code=500, detail="PDF generation not available. Install reportlab: pip install reportlab")
+        raise HTTPException(status_code=500, detail="PDF generation not available")
     
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=72, leftMargin=72, topMargin=72, bottomMargin=72)
@@ -777,19 +753,18 @@ async def generate_pdf_report(data: dict, case_number: str) -> Response:
     buffer.seek(0)
     
     return Response(
-    content=buffer.getvalue(), 
-    media_type="application/pdf", 
-    headers={
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Authorization, Content-Type",
-        "Content-Disposition": f"attachment; filename=investigation_report_{case_number}.pdf"
-    }
-)
+        content=buffer.getvalue(), 
+        media_type="application/pdf", 
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Content-Disposition": f"attachment; filename=investigation_report_{case_number}.pdf"
+        }
+    )
+
 
 async def generate_docx_report(data: dict, case_number: str) -> Response:
     if not DOCX_AVAILABLE:
-        raise HTTPException(status_code=500, detail="DOCX generation not available. Install python-docx: pip install python-docx")
+        raise HTTPException(status_code=500, detail="DOCX generation not available")
     
     doc = docx.Document()
     title = doc.add_heading('INVESTIGATION REPORT', 0)
@@ -836,6 +811,7 @@ async def generate_docx_report(data: dict, case_number: str) -> Response:
     buffer.seek(0)
     
     return Response(content=buffer.getvalue(), media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", headers={"Content-Disposition": f"attachment; filename=investigation_report_{case_number}.docx"})
+
 
 async def generate_txt_report(data: dict, case_number: str) -> Response:
     lines = []
@@ -896,40 +872,38 @@ async def generate_txt_report(data: dict, case_number: str) -> Response:
     
     return Response(content="\n".join(lines).encode('utf-8'), media_type="text/plain", headers={"Content-Disposition": f"attachment; filename=investigation_report_{case_number}.txt"})
 
-# backend/app/api/cases.py
-# REPLACE the existing submit-to-court endpoint with this:
 
+# ============ SUBMIT CASE TO COURT ============
 @router.post("/submit-to-court/{case_id}")
 async def submit_case_to_court(
     case_id: str,
     payload: SubmitToCourtRequest,
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))
 ):
-    case = ipfs_storage.get_case(case_id)
+    case = await mongo_storage.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
-    # Check if court officer exists
-    target_user = ipfs_storage.get_user(payload.court_email)
+    target_user = await mongo_storage.get_user(payload.court_email)
     if not target_user or target_user.get("role") != "COURT":
         raise HTTPException(status_code=404, detail="Court officer not found")
     
     for ev_id in case.get("evidence", []):
-        ev = ipfs_storage.get_evidence(ev_id)
+        ev = await mongo_storage.get_evidence(ev_id)
         if ev:
             ev["status"] = "SUBMITTED_TO_COURT"
             ev["submitted_to_court_at"] = datetime.now(timezone.utc).isoformat()
             ev["submitted_by"] = current_user["email"]
             ev["assigned_court_officer"] = payload.court_email
             ev["assigned_court_officer_name"] = target_user.get("full_name")
-            ipfs_storage.save_evidence(ev_id, ev)
+            await mongo_storage.save_evidence(ev_id, ev)
     
     case["status"] = "SUBMITTED_TO_COURT"
     case["submitted_to_court_at"] = datetime.now(timezone.utc).isoformat()
     case["submitted_by"] = current_user["email"]
     case["assigned_court_officer"] = payload.court_email
     case["assigned_court_officer_name"] = target_user.get("full_name")
-    ipfs_storage.update_case(case_id, case)
+    await mongo_storage.update_case(case_id, case)
     
     return {
         "message": f"Case submitted to {payload.court_email}", 
@@ -939,20 +913,18 @@ async def submit_case_to_court(
     }
 
 
-# REPLACE the existing submit-to-forensic endpoint with this:
-
+# ============ SUBMIT EVIDENCE TO FORENSIC ============
 @router.post("/submit-to-forensic/{evidence_id}")
 async def submit_evidence_to_forensic(
     evidence_id: str,
     payload: SubmitToForensicRequest,
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))
 ):
-    evidence = ipfs_storage.get_evidence(evidence_id)
+    evidence = await mongo_storage.get_evidence(evidence_id)
     if not evidence:
         raise HTTPException(status_code=404, detail="Evidence not found")
     
-    # Check if forensic analyst exists
-    target_user = ipfs_storage.get_user(payload.forensic_email)
+    target_user = await mongo_storage.get_user(payload.forensic_email)
     if not target_user or target_user.get("role") != "FORENSIC_ANALYST":
         raise HTTPException(status_code=404, detail="Forensic analyst not found")
     
@@ -962,21 +934,20 @@ async def submit_evidence_to_forensic(
     evidence["assigned_forensic_analyst"] = payload.forensic_email
     evidence["assigned_forensic_analyst_name"] = target_user.get("full_name")
     evidence["analysis_status"] = "PENDING"
-    ipfs_storage.save_evidence(evidence_id, evidence)
+    await mongo_storage.save_evidence(evidence_id, evidence)
     
-    # Add to timeline
-    case = ipfs_storage.get_case(evidence.get("case_id"))
+    case = await mongo_storage.get_case(evidence.get("case_id"))
     if case:
         if "timeline" not in case:
             case["timeline"] = []
         case["timeline"].append({
-            "action": f"Evidence {evidence_id} submitted to forensic lab",
+            "action": f"Evidence submitted to forensic lab",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "by": current_user["email"],
             "assigned_to": payload.forensic_email,
             "assigned_to_name": target_user.get("full_name")
         })
-        ipfs_storage.update_case(evidence.get("case_id"), case)
+        await mongo_storage.update_case(evidence.get("case_id"), case)
     
     return {
         "message": f"Evidence submitted to {payload.forensic_email}", 
@@ -985,389 +956,18 @@ async def submit_evidence_to_forensic(
         "assigned_to_name": target_user.get("full_name")
     }
 
-@router.post("/evidence/upload-encrypted")
-async def add_evidence_encrypted(
-    case_id: str = Form(...),
-    title: str = Form(...),
-    description: str = Form(""),
-    file: UploadFile = File(...),
-    current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR)),
-):
-    """Upload evidence file to IPFS with encryption"""
-    case = ipfs_storage.get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
 
-    content = await file.read()
-    
-    # Encrypt evidence before uploading
-    encrypted_content = encryption_service.encrypt(content)
-    if encrypted_content is None and encryption_service.encryption_enabled:
-        raise HTTPException(status_code=500, detail="Encryption failed")
-    
-    # Use encrypted content for hash calculation
-    content_to_hash = encrypted_content if encrypted_content else content
-    file_hash = hashlib.sha256(content_to_hash).hexdigest()
-    
-    # Upload encrypted file to IPFS
-    result = await ipfs_client.upload_file(
-        encrypted_content if encrypted_content else content, 
-        f"{file.filename}.encrypted" if encrypted_content else file.filename
-    )
-    cid = result["cid"]
-    
-    evidence_id = f"EVD-{uuid.uuid4().hex[:10].upper()}"
-    now = datetime.now(timezone.utc).isoformat()
-    
-    evidence_data = {
-        "evidence_id": evidence_id,
-        "case_id": case_id,
-        "title": title,
-        "description": description,
-        "ipfs_cid": cid,
-        "hash": file_hash,
-        "encrypted": encryption_service.encryption_enabled,
-        "file_size": len(content),
-        "original_filename": file.filename,
-        "created_by": current_user["email"],
-        "status": "COLLECTED",
-        "created_at": now,
-        "updated_at": now,
-    }
-
-    ipfs_storage.save_evidence(evidence_id, evidence_data)
-    
-    if "evidence" not in case:
-        case["evidence"] = []
-    case["evidence"].append(evidence_id)
-    case["updated_at"] = now
-    ipfs_storage.update_case(case_id, case)
-    
-    anchor_sha256(
-        object_type="EVIDENCE",
-        object_id=evidence_id,
-        sha256_hex=evidence_data.get("hash", ""),
-        ipfs_cid=evidence_data.get("ipfs_cid", ""),
-    )
-    
-    # Send WebSocket notification
-    await notify_case_update(case_id, "evidence_added", {
-        "evidence_id": evidence_id,
-        "title": title,
-        "added_by": current_user["email"]
-    })
-    
-    return {
-        "evidence_id": evidence_id,
-        "hash": file_hash,
-        "ipfs_cid": cid,
-        "title": title,
-        "case_id": case_id,
-        "encrypted": encryption_service.encryption_enabled,
-        "message": "Evidence uploaded with encryption"
-    }
-
-# ADD this endpoint for decryption (court/forensic only)
-@router.get("/evidence/decrypt/{evidence_id}")
-async def decrypt_evidence(
-    evidence_id: str,
-    current_user: dict = Depends(require_roles(UserRole.COURT, UserRole.FORENSIC_ANALYST))
-):
-    """Decrypt evidence for authorized personnel"""
-    evidence = ipfs_storage.get_evidence(evidence_id)
-    if not evidence:
-        raise HTTPException(status_code=404, detail="Evidence not found")
-    
-    if not evidence.get("encrypted"):
-        return {"message": "Evidence not encrypted", "data": evidence}
-    
-    # Get encrypted content from IPFS
-    encrypted_content = await ipfs_client.get_file(evidence.get("ipfs_cid"))
-    if not encrypted_content:
-        raise HTTPException(status_code=404, detail="Evidence file not found")
-    
-    # Decrypt
-    decrypted = encryption_service.decrypt(encrypted_content)
-    if decrypted is None:
-        raise HTTPException(status_code=500, detail="Decryption failed")
-    
-    # Log access
-    log_entry = {
-        "decrypted_at": datetime.now(timezone.utc).isoformat(),
-        "decrypted_by": current_user["email"],
-        "decrypted_by_name": current_user.get("full_name")
-    }
-    
-    if "decryption_logs" not in evidence:
-        evidence["decryption_logs"] = []
-    evidence["decryption_logs"].append(log_entry)
-    ipfs_storage.save_evidence(evidence_id, evidence)
-    
-    return {
-        "evidence_id": evidence_id,
-        "decrypted": True,
-        "file_size": len(decrypted),
-        "original_filename": evidence.get("original_filename"),
-        "decrypted_by": current_user["email"]
-    }
-# ============ NEW ENDPOINT: Multi-Signature Approval for Evidence ============
-
-@router.post("/evidence/approve/{evidence_id}")
-async def approve_evidence(
-    evidence_id: str,
-    approver_level: int,  # 1=IO, 2=DSP, 3=Court
-    current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR, UserRole.COURT))
-):
-    """Multi-signature approval for evidence"""
-    evidence = ipfs_storage.get_evidence(evidence_id)
-    if not evidence:
-        raise HTTPException(status_code=404, detail="Evidence not found")
-    
-    evidence_hash = evidence.get("hash", "")
-    
-    # Send to blockchain
-    tx = approve_multisig(evidence_hash, approver_level)
-    
-    # Update local record
-    if "approvals" not in evidence:
-        evidence["approvals"] = []
-    
-    approval_level_names = {1: "IO", 2: "DSP", 3: "COURT"}
-    
-    evidence["approvals"].append({
-        "level": approver_level,
-        "level_name": approval_level_names.get(approver_level, "UNKNOWN"),
-        "approved_by": current_user["email"],
-        "approved_by_name": current_user.get("full_name"),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "tx_hash": tx.tx_hash if tx else None
-    })
-    
-    ipfs_storage.save_evidence(evidence_id, evidence)
-    
-    # Get current approval status
-    status = get_approval_status(evidence_hash)
-    
-    return {
-        "message": f"Level {approver_level} approval recorded",
-        "evidence_id": evidence_id,
-        "approval_status": status,
-        "tx_hash": tx.tx_hash if tx else None
-    }
-
-
-@router.get("/evidence/approval-status/{evidence_id}")
-async def get_evidence_approval_status(
-    evidence_id: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """Get multi-signature approval status for evidence"""
-    evidence = ipfs_storage.get_evidence(evidence_id)
-    if not evidence:
-        raise HTTPException(status_code=404, detail="Evidence not found")
-    
-    evidence_hash = evidence.get("hash", "")
-    status = get_approval_status(evidence_hash)
-    
-    return {
-        "evidence_id": evidence_id,
-        "evidence_title": evidence.get("title"),
-        "io_approved": status.get("io_approved", False),
-        "dsp_approved": status.get("dsp_approved", False),
-        "court_approved": status.get("court_approved", False),
-        "fully_approved": status.get("io_approved") and status.get("dsp_approved") and status.get("court_approved")
-    }
-
-
-# ============ NEW ENDPOINT: Appeal System ============
-
-@router.post("/case/appeal/{case_id}")
-async def file_case_appeal(
-    case_id: str,
-    grounds: str,
-    current_user: dict = Depends(require_roles(UserRole.PUBLIC_USER))
-):
-    """File an appeal against a judgment"""
-    case = ipfs_storage.get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-    
-    # Check if case is decided
-    if case.get("status") != "DECIDED":
-        raise HTTPException(status_code=400, detail="Can only appeal decided cases")
-    
-    # Check if within 30 days
-    judgment_date = case.get("judgment_date")
-    if judgment_date:
-        judgment_datetime = datetime.fromisoformat(judgment_date)
-        days_passed = (datetime.now(timezone.utc) - judgment_datetime).days
-        if days_passed > 30:
-            raise HTTPException(status_code=400, detail="Appeal window closed (30 days)")
-    
-    # Send to blockchain
-    tx = file_appeal(case_id, grounds)
-    
-    # Store appeal locally
-    if "appeals" not in case:
-        case["appeals"] = []
-    
-    case["appeals"].append({
-        "grounds": grounds,
-        "filed_by": current_user["email"],
-        "filed_by_name": current_user.get("full_name"),
-        "filed_at": datetime.now(timezone.utc).isoformat(),
-        "tx_hash": tx.tx_hash if tx else None,
-        "status": "PENDING"
-    })
-    
-    ipfs_storage.update_case(case_id, case)
-    
-    return {
-        "message": "Appeal filed successfully",
-        "case_id": case_id,
-        "grounds": grounds,
-        "tx_hash": tx.tx_hash if tx else None
-    }
-
-
-@router.get("/case/appeal/{case_id}")
-async def get_case_appeal(
-    case_id: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """Get appeal details for a case"""
-    appeal_data = get_appeal(case_id)
-    return {
-        "case_id": case_id,
-        "appeal": appeal_data
-    }
-
-
-# ============ NEW ENDPOINT: Fine Escrow System ============
-
-@router.post("/escrow/deposit/{case_id}")
-async def deposit_fine_escrow(
-    case_id: str,
-    amount_pkr: float,
-    current_user: dict = Depends(require_roles(UserRole.COURT))
-):
-    """Deposit fine amount into escrow (called by court)"""
-    case = ipfs_storage.get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-    
-    # Convert PKR to Wei (simplified - in real life use Oracle)
-    # 1 PKR ≈ 0.0003 ETH (example)
-    amount_eth = amount_pkr * 0.0003
-    amount_wei = int(amount_eth * 10**18)
-    
-    # Get complainant address (in real life, get from NADRA)
-    fir = ipfs_storage.get_fir(case.get("fir_id"))
-    beneficiary = current_user["email"]  # Placeholder
-    
-    tx = deposit_escrow(case_id, beneficiary, amount_wei)
-    
-    return {
-        "message": f"Escrow deposit of PKR {amount_pkr} recorded",
-        "case_id": case_id,
-        "amount_pkr": amount_pkr,
-        "tx_hash": tx.tx_hash if tx else None
-    }
-
-
-@router.post("/escrow/release/{case_id}")
-async def release_fine_escrow(
-    case_id: str,
-    current_user: dict = Depends(require_roles(UserRole.COURT))
-):
-    """Release fine to victim after judgment"""
-    case = ipfs_storage.get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-    
-    tx = release_fine(case_id)
-    
-    return {
-        "message": "Fine released to victim",
-        "case_id": case_id,
-        "tx_hash": tx.tx_hash if tx else None
-    }
-
-
-@router.get("/escrow/{case_id}")
-async def get_escrow_details(
-    case_id: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """Get escrow details for a case"""
-    escrow_data = get_escrow(case_id)
-    return {
-        "case_id": case_id,
-        "escrow": escrow_data
-    }
-
-
-# ============ NEW ENDPOINT: Case Timeline ============
-
-@router.post("/case/timeline/{case_id}")
-async def update_case_timeline_blockchain(
-    case_id: str,
-    stage: int,
-    current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR, UserRole.COURT))
-):
-    """Update case timeline on blockchain"""
-    stage_names = {
-        1: "FIR Filed",
-        2: "Police Assigned",
-        3: "Investigation Completed",
-        4: "Forensic Submitted",
-        5: "Court Submitted",
-        6: "Judgment Delivered"
-    }
-    
-    tx = update_case_timeline(case_id, stage)
-    
-    return {
-        "message": f"Timeline updated: {stage_names.get(stage, 'Unknown')}",
-        "case_id": case_id,
-        "stage": stage,
-        "stage_name": stage_names.get(stage, "Unknown"),
-        "tx_hash": tx.tx_hash if tx else None
-    }
-
-@router.get("/case/{case_id}/user-documents")
-async def get_user_documents_for_case(
-    case_id: str,
-    current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))
-):
-    """Get user documents related to a case"""
-    case = ipfs_storage.get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-    
-    fir = ipfs_storage.get_fir(case.get("fir_id"))
-    if not fir:
-        raise HTTPException(status_code=404, detail="FIR not found")
-    
-    complainant_email = fir.get("complainant_email")
-    documents = ipfs_storage.get_user_documents(complainant_email)
-    
-    return list(documents.values())
-
-
+# ============ GET ALL CASES LIST ============
 @router.get("/list")
 async def get_all_cases_list(current_user: dict = Depends(get_current_user)):
-    """Get all cases (simple list for dropdowns)"""
-    all_cases = ipfs_storage.get_all_cases()
+    all_cases = await mongo_storage.get_all_cases()
     
-    # Filter based on role
     if current_user["role"] == UserRole.FORENSIC_ANALYST.value:
-        # Forensic can see all cases with evidence
         cases_list = []
-        all_evidence = ipfs_storage.get_all_evidence()
+        all_evidence = await mongo_storage.get_all_evidence()
         for case in all_cases:
             case_evidence = [ev for ev in all_evidence if ev.get("case_id") == case.get("case_id")]
-            if case_evidence:  # Only cases with evidence
+            if case_evidence:
                 cases_list.append({
                     "case_id": case.get("case_id"),
                     "case_number": case.get("case_number"),
@@ -1385,11 +985,12 @@ async def get_all_cases_list(current_user: dict = Depends(get_current_user)):
             }
             for case in all_cases
         ]
-    
+
+
+# ============ GET MY CASES ============
 @router.get("/my-cases")
 async def get_my_cases(current_user: dict = Depends(get_current_user)):
-    """Get cases assigned to current investigator"""
-    all_cases = ipfs_storage.get_all_cases()
+    all_cases = await mongo_storage.get_all_cases()
     
     my_cases = []
     for case in all_cases:
@@ -1403,35 +1004,34 @@ async def get_my_cases(current_user: dict = Depends(get_current_user)):
             })
     
     return my_cases
-    
+
+
+# ============ SEND SINGLE EVIDENCE TO FORENSIC ============
 @router.post("/{case_id}/evidence/{evidence_id}/send-to-forensic")
 async def send_single_evidence_to_forensic(
     case_id: str,
     evidence_id: str,
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))
 ):
-    """Investigator sends specific evidence to forensic lab"""
-    case = ipfs_storage.get_case(case_id)
+    case = await mongo_storage.get_case(case_id)
     if not case or case.get("investigator_email") != current_user["email"]:
         raise HTTPException(status_code=403, detail="Access denied")
     
-    evidence = ipfs_storage.get_evidence(evidence_id)
+    evidence = await mongo_storage.get_evidence(evidence_id)
     if not evidence or evidence.get("case_id") != case_id:
         raise HTTPException(status_code=404, detail="Evidence not found")
     
-    # Update evidence status
     evidence["status"] = "TRANSFERRED_TO_FORENSIC"
     evidence["analysis_status"] = "PENDING"
     evidence["transferred_at"] = datetime.now(timezone.utc).isoformat()
     evidence["transferred_by"] = current_user["email"]
     evidence["transferred_by_name"] = current_user.get("full_name")
     
-    ipfs_storage.save_evidence(evidence_id, evidence)
+    await mongo_storage.save_evidence(evidence_id, evidence)
     
-    # Also update case to indicate forensic pending (if not already)
     if case.get("forensic_status") != "ACCEPTED":
         case["forensic_status"] = "PENDING"
-        ipfs_storage.save_case(case_id, case)
+        await mongo_storage.save_case(case_id, case)
     
     return {
         "message": f"Evidence '{evidence.get('title')}' sent to forensic lab",
@@ -1440,24 +1040,23 @@ async def send_single_evidence_to_forensic(
     }
 
 
+# ============ GET MY HEARINGS ============
 @router.get("/my-hearings")
 async def get_my_hearings(current_user: dict = Depends(get_current_user)):
-    """Get all hearings for cases where user is involved (investigator or complainant)"""
-    all_cases = ipfs_storage.get_all_cases()
+    all_cases = await mongo_storage.get_all_cases()
     my_hearings = []
     
     user_email = current_user["email"]
     user_role = current_user["role"]
     
     for case in all_cases:
-        fir = ipfs_storage.get_fir(case.get("fir_id"))
+        fir = await mongo_storage.get_fir(case.get("fir_id"))
         
-        # Check if user is complainant or investigator
         is_complainant = fir and fir.get("complainant_email") == user_email
         is_investigator = case.get("investigator_email") == user_email
         
         if is_complainant or is_investigator or user_role == "ADMIN":
-            hearings = ipfs_storage.get_case_hearings(case.get("case_id"))
+            hearings = await mongo_storage.get_case_hearings(case.get("case_id"))
             for hearing_id, hearing in hearings.items():
                 my_hearings.append({
                     "hearing_id": hearing_id,
@@ -1475,6 +1074,5 @@ async def get_my_hearings(current_user: dict = Depends(get_current_user)):
                     "created_at": hearing.get("created_at")
                 })
     
-    # Sort by date (upcoming first)
     my_hearings.sort(key=lambda x: x.get("hearing_date", ""))
     return my_hearings

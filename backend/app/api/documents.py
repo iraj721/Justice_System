@@ -6,9 +6,8 @@ from datetime import datetime, timezone
 from app.core.authz import get_current_user, require_roles
 from app.core.roles import UserRole
 from app.core.config import settings
-from app.services.ipfs_storage import ipfs_storage
-from app.core.ipfs_client import ipfs_client
-from app.services.chain_anchor import anchor_sha256
+from app.services.mongo_storage import mongo_storage
+from app.services.cloudinary_service import cloudinary_service
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -20,17 +19,27 @@ async def upload_document(
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user)
 ):
-    """Upload personal documents (CNIC, address proof, etc.)"""
+    """Upload personal documents (CNIC, address proof, etc.) to Cloudinary"""
     # Validate file size (max 10MB)
     content = await file.read()
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large. Max 10MB")
     
-    # Upload to IPFS
-    result = await ipfs_client.upload_file(content, file.filename)
+    # Calculate content hash
     content_hash = hashlib.sha256(content).hexdigest()
-
+    
+    # Upload to Cloudinary
+    cloudinary_result = await cloudinary_service.upload_file(
+        content,
+        file.filename or "document",
+        folder=f"documents/{current_user['email']}"
+    )
+    
+    if not cloudinary_result.get("url"):
+        raise HTTPException(status_code=500, detail="Cloudinary upload failed")
+    
     doc_id = f"DOC-{uuid.uuid4().hex[:8].upper()}"
+    
     document = {
         "doc_id": doc_id,
         "user_email": current_user["email"],
@@ -41,43 +50,25 @@ async def upload_document(
         "file_size": len(content),
         "mime_type": file.content_type or "application/octet-stream",
         "content_hash": content_hash,
-        "ipfs_cid": result["cid"],
-        "gateway_url": f"{settings.IPFS_GATEWAY_URL}/ipfs/{result['cid']}",
+        "cloudinary_url": cloudinary_result["url"],
+        "cloudinary_public_id": cloudinary_result["public_id"],
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
     }
     
-    ipfs_storage.save_user_document(current_user["email"], doc_id, document)
+    await mongo_storage.save_user_document(current_user["email"], doc_id, document)
     
-    # ============ PIN THE DOCUMENT CID TO IPFS ============
-    try:
-        import requests
-        cid_to_pin = result["cid"]
-        if cid_to_pin:
-            pin_response = requests.post(
-                f"{settings.IPFS_API_URL}/api/v0/pin/add",
-                params={"arg": cid_to_pin},
-                timeout=30
-            )
-            if pin_response.status_code == 200:
-                print(f"✅ Document pinned: {cid_to_pin}")
-            else:
-                print(f"⚠️ Failed to pin document: {pin_response.text}")
-    except Exception as e:
-        print(f"⚠️ Pin error: {e}")
-    # ============ END PINNING ============
-    
-    anchor_sha256(
-        object_type="DOCUMENT",
-        object_id=doc_id,
-        sha256_hex=document.get("content_hash", ""),
-        ipfs_cid=document.get("ipfs_cid", ""),
-    )
-    return {"doc_id": doc_id, "ipfs_cid": result["cid"], "message": "Document uploaded"}
+    return {
+        "doc_id": doc_id,
+        "cloudinary_url": cloudinary_result["url"],
+        "message": "Document uploaded successfully"
+    }
+
 
 @router.get("/my-documents")
 async def get_my_documents(current_user: dict = Depends(get_current_user)):
     """Get all user documents"""
-    return ipfs_storage.get_user_documents(current_user["email"])
+    return await mongo_storage.get_user_documents(current_user["email"])
+
 
 @router.get("/types")
 async def get_document_types():
@@ -86,11 +77,13 @@ async def get_document_types():
         "types": ["CNIC", "PASSPORT", "ADDRESS_PROOF", "INCOME_PROOF", "OTHER"]
     }
 
+
 @router.delete("/{doc_id}")
 async def delete_document(doc_id: str, current_user: dict = Depends(get_current_user)):
     """Delete a document"""
-    ipfs_storage.delete_user_document(current_user["email"], doc_id)
+    await mongo_storage.delete_user_document(current_user["email"], doc_id)
     return {"message": "Document deleted"}
+
 
 @router.post("/submit-to-case/{doc_id}")
 async def submit_document_to_case(
@@ -101,7 +94,7 @@ async def submit_document_to_case(
     """Submit user document as evidence to a case (user action)"""
     
     # Get the document
-    user_docs = ipfs_storage.get_user_documents(current_user["email"])
+    user_docs = await mongo_storage.get_user_documents(current_user["email"])
     document = None
     for doc in user_docs:
         if doc.get("doc_id") == doc_id:
@@ -112,12 +105,12 @@ async def submit_document_to_case(
         raise HTTPException(status_code=404, detail="Document not found")
     
     # Get the case
-    case = ipfs_storage.get_case(case_id)
+    case = await mongo_storage.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
     # Verify user owns this case (through FIR)
-    fir = ipfs_storage.get_fir(case.get("fir_id"))
+    fir = await mongo_storage.get_fir(case.get("fir_id"))
     if not fir or fir.get("complainant_email") != current_user["email"]:
         raise HTTPException(status_code=403, detail="Not your case")
     
@@ -130,7 +123,7 @@ async def submit_document_to_case(
         "case_id": case_id,
         "title": document.get("title"),
         "description": f"User submitted document: {document.get('description', '')}",
-        "ipfs_cid": document.get("ipfs_cid"),
+        "cloudinary_url": document.get("cloudinary_url"),
         "hash": document.get("content_hash"),
         "file_size": document.get("file_size"),
         "mime_type": document.get("mime_type"),
@@ -145,32 +138,14 @@ async def submit_document_to_case(
         "updated_at": now
     }
     
-    ipfs_storage.save_evidence(evidence_id, evidence_data)
-    
-    # ============ PIN THE CID TO IPFS ============
-    try:
-        import requests
-        cid_to_pin = document.get("ipfs_cid")
-        if cid_to_pin:
-            pin_response = requests.post(
-                f"{settings.IPFS_API_URL}/api/v0/pin/add",
-                params={"arg": cid_to_pin},
-                timeout=30
-            )
-            if pin_response.status_code == 200:
-                print(f"✅ Pinned CID: {cid_to_pin}")
-            else:
-                print(f"⚠️ Failed to pin CID: {pin_response.text}")
-    except Exception as e:
-        print(f"⚠️ Pin error: {e}")
-    # ============ END PINNING ============
+    await mongo_storage.save_evidence(evidence_id, evidence_data)
     
     # Add to case
     if "evidence" not in case:
         case["evidence"] = []
     case["evidence"].append(evidence_id)
     case["updated_at"] = now
-    ipfs_storage.update_case(case_id, case)
+    await mongo_storage.update_case(case_id, case)
     
     # Add to timeline
     if "timeline" not in case:
@@ -182,7 +157,7 @@ async def submit_document_to_case(
         "by_name": current_user.get("full_name"),
         "evidence_id": evidence_id
     })
-    ipfs_storage.update_case(case_id, case)
+    await mongo_storage.update_case(case_id, case)
     
     # Notify investigator
     from app.services.notification_service import notification_service
@@ -200,13 +175,6 @@ async def submit_document_to_case(
             """
         )
     
-    anchor_sha256(
-        object_type="EVIDENCE",
-        object_id=evidence_id,
-        sha256_hex=evidence_data.get("hash", ""),
-        ipfs_cid=evidence_data.get("ipfs_cid", ""),
-    )
-    
     return {
         "success": True,
         "evidence_id": evidence_id,
@@ -221,7 +189,7 @@ async def get_case_documents(
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR, UserRole.COURT))
 ):
     """Get documents submitted by user for a case (Investigator view)"""
-    case = ipfs_storage.get_case(case_id)
+    case = await mongo_storage.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
@@ -233,7 +201,7 @@ async def get_case_documents(
     # Get all evidence that came from user documents
     evidence_list = []
     for ev_id in case.get("evidence", []):
-        ev = ipfs_storage.get_evidence(ev_id)
+        ev = await mongo_storage.get_evidence(ev_id)
         if ev and ev.get("source") == "USER_DOCUMENT":
             evidence_list.append(ev)
     
@@ -248,14 +216,14 @@ async def review_document_evidence(
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))
 ):
     """Investigator reviews user-submitted document evidence"""
-    evidence = ipfs_storage.get_evidence(evidence_id)
+    evidence = await mongo_storage.get_evidence(evidence_id)
     if not evidence:
         raise HTTPException(status_code=404, detail="Evidence not found")
     
     if evidence.get("source") != "USER_DOCUMENT":
         raise HTTPException(status_code=400, detail="Not a user-submitted document")
     
-    case = ipfs_storage.get_case(evidence.get("case_id"))
+    case = await mongo_storage.get_case(evidence.get("case_id"))
     if not case or case.get("investigator_email") != current_user["email"]:
         raise HTTPException(status_code=403, detail="Not your case")
     
@@ -300,13 +268,13 @@ async def review_document_evidence(
         
         message = "Document evidence rejected"
     else:
-        raise HTTPException(status_code=400, detail="Invalid action")
+        raise HTTPException(status_code=400, detail="Invalid action. Use ACCEPT or REJECT")
     
-    ipfs_storage.save_evidence(evidence_id, evidence)
-    ipfs_storage.update_case(evidence.get("case_id"), case)
+    await mongo_storage.save_evidence(evidence_id, evidence)
+    await mongo_storage.update_case(evidence.get("case_id"), case)
     
     # Notify user
-    fir = ipfs_storage.get_fir(case.get("fir_id"))
+    fir = await mongo_storage.get_fir(case.get("fir_id"))
     if fir:
         from app.services.notification_service import notification_service
         await notification_service.send_email(

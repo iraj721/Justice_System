@@ -4,15 +4,15 @@ from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 from app.core.authz import require_roles
 from app.core.roles import UserRole
-from app.services.ipfs_storage import ipfs_storage
+from app.services.mongo_storage import mongo_storage
 
 router = APIRouter(prefix="/forensic/dashboard", tags=["Forensic Dashboard"])
 
 @router.get("/stats")
 async def get_forensic_dashboard(current_user: dict = Depends(require_roles(UserRole.FORENSIC_ANALYST))):
     """Get comprehensive forensic dashboard statistics"""
-    all_evidence = ipfs_storage.get_all_evidence()
-    all_cases = ipfs_storage.get_all_cases()
+    all_evidence = await mongo_storage.get_all_evidence()
+    all_cases = await mongo_storage.get_all_cases()
     
     today = datetime.now(timezone.utc).date()
     week_ago = today - timedelta(days=7)
@@ -42,7 +42,7 @@ async def get_forensic_dashboard(current_user: dict = Depends(require_roles(User
         
         # Analysis types from completed analyses
         if status == "COMPLETED":
-            analyses = ipfs_storage.get_evidence_analyses(evidence.get("evidence_id"))
+            analyses = await mongo_storage.get_evidence_analyses(evidence.get("evidence_id"))
             for analysis in analyses.values():
                 atype = analysis.get("analysis_type", "UNKNOWN")
                 analysis_types[atype] += 1
@@ -53,7 +53,7 @@ async def get_forensic_dashboard(current_user: dict = Depends(require_roles(User
     # My performance
     my_analyses = []
     for evidence in all_evidence:
-        analyses = ipfs_storage.get_evidence_analyses(evidence.get("evidence_id"))
+        analyses = await mongo_storage.get_evidence_analyses(evidence.get("evidence_id"))
         for analysis in analyses.values():
             if analysis.get("analyzed_by") == current_user["email"]:
                 my_analyses.append(analysis)
@@ -64,11 +64,14 @@ async def get_forensic_dashboard(current_user: dict = Depends(require_roles(User
     analysis_times = []
     for analysis in my_analyses:
         if analysis.get("created_at") and analysis.get("updated_at"):
-            created = datetime.fromisoformat(analysis["created_at"])
-            updated = datetime.fromisoformat(analysis["updated_at"])
-            days = (updated - created).days
-            if days > 0:
-                analysis_times.append(days)
+            try:
+                created = datetime.fromisoformat(analysis["created_at"])
+                updated = datetime.fromisoformat(analysis["updated_at"])
+                days = (updated - created).days
+                if days > 0:
+                    analysis_times.append(days)
+            except (ValueError, TypeError):
+                pass
     
     avg_time = round(sum(analysis_times) / len(analysis_times), 1) if analysis_times else 0
     
@@ -93,7 +96,7 @@ async def get_forensic_dashboard(current_user: dict = Depends(require_roles(User
 @router.get("/recent")
 async def get_recent_activity(current_user: dict = Depends(require_roles(UserRole.FORENSIC_ANALYST))):
     """Get recent forensic activity"""
-    all_evidence = ipfs_storage.get_all_evidence()
+    all_evidence = await mongo_storage.get_all_evidence()
     recent_activity = []
     
     for evidence in all_evidence:
@@ -104,7 +107,8 @@ async def get_recent_activity(current_user: dict = Depends(require_roles(UserRol
                 "evidence_id": evidence.get("evidence_id"),
                 "title": evidence.get("title"),
                 "timestamp": evidence.get("analysis_started_at"),
-                "by": evidence.get("analyzed_by")
+                "by": evidence.get("analyzed_by"),
+                "by_name": evidence.get("analyzed_by_name")
             })
         
         if evidence.get("analysis_completed_at"):
@@ -113,7 +117,8 @@ async def get_recent_activity(current_user: dict = Depends(require_roles(UserRol
                 "evidence_id": evidence.get("evidence_id"),
                 "title": evidence.get("title"),
                 "timestamp": evidence.get("analysis_completed_at"),
-                "by": evidence.get("analyzed_by")
+                "by": evidence.get("analyzed_by"),
+                "by_name": evidence.get("analyzed_by_name")
             })
     
     # Sort by timestamp descending and take last 10

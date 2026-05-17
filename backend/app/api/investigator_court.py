@@ -8,8 +8,8 @@ import uuid
 import json
 from app.core.authz import require_roles
 from app.core.roles import UserRole
-from app.services.ipfs_storage import ipfs_storage
-from app.core.ipfs_client import ipfs_client
+from app.services.mongo_storage import mongo_storage
+
 
 router = APIRouter(prefix="/investigator/court", tags=["Investigator Court Package"])
 
@@ -21,21 +21,21 @@ class CourtSubmissionPackage(BaseModel):
 @router.post("/prepare-package")
 async def prepare_court_package(payload: CourtSubmissionPackage, current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
     """Prepare complete court submission package"""
-    case = ipfs_storage.get_case(payload.case_id)
+    case = await mongo_storage.get_case(payload.case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
     if case.get("investigator_email") != current_user["email"]:
         raise HTTPException(status_code=403, detail="Not your case")
     
-    fir = ipfs_storage.get_fir(case.get("fir_id"))
+    fir = await mongo_storage.get_fir(case.get("fir_id"))
     if not fir:
         raise HTTPException(status_code=404, detail="FIR not found")
     
     # Gather all evidence
     evidence_list = []
     for ev_id in case.get("evidence", []):
-        ev = ipfs_storage.get_evidence(ev_id)
+        ev = await mongo_storage.get_evidence(ev_id)
         if ev:
             evidence_list.append(ev)
     
@@ -78,7 +78,7 @@ async def prepare_court_package(payload: CourtSubmissionPackage, current_user: d
                     "evidence_id": e.get("evidence_id"),
                     "title": e.get("title"),
                     "description": e.get("description"),
-                    "ipfs_cid": e.get("ipfs_cid"),
+                    "cloudinary_url": e.get("cloudinary_url") or e.get("ipfs_cid"),
                     "hash": e.get("hash"),
                     "status": e.get("status"),
                     "collected_by": e.get("created_by"),
@@ -99,17 +99,13 @@ async def prepare_court_package(payload: CourtSubmissionPackage, current_user: d
     }
     
     # Save package
-    packages = ipfs_storage.get_court_packages(payload.case_id)
+    packages = await mongo_storage.get_court_packages(payload.case_id)
     packages[package_id] = package
-    ipfs_storage.save_court_packages(payload.case_id, packages)
+    await mongo_storage.save_court_packages(payload.case_id, packages)
     
-    # Upload to IPFS
-    try:
-        pkg_cid = await ipfs_client.upload_json(package)
-        package["ipfs_cid"] = pkg_cid
-        ipfs_storage.save_court_packages(payload.case_id, packages)
-    except Exception as e:
-        print(f"IPFS upload failed: {e}")
+    # No IPFS upload needed - data stored in MongoDB
+    package["storage_cid"] = "STORED_IN_MONGODB"
+    await mongo_storage.save_court_packages(payload.case_id, packages)
     
     return JSONResponse(
         content=package,
@@ -119,14 +115,14 @@ async def prepare_court_package(payload: CourtSubmissionPackage, current_user: d
 @router.get("/packages/{case_id}")
 async def get_court_packages(case_id: str, current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
     """Get all court packages for a case"""
-    case = ipfs_storage.get_case(case_id)
+    case = await mongo_storage.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
     if case.get("investigator_email") != current_user["email"]:
         raise HTTPException(status_code=403, detail="Not your case")
     
-    packages = ipfs_storage.get_court_packages(case_id)
+    packages = await mongo_storage.get_court_packages(case_id)
     return JSONResponse(
         content=list(packages.values()),
         headers={"Access-Control-Allow-Origin": "*"}
@@ -136,12 +132,12 @@ async def get_court_packages(case_id: str, current_user: dict = Depends(require_
 async def submit_package_to_court(package_id: str, current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
     """Submit prepared package to court"""
     # Find package
-    all_cases = ipfs_storage.get_all_cases()
+    all_cases = await mongo_storage.get_all_cases()
     found_package = None
     found_case_id = None
     
     for case in all_cases:
-        packages = ipfs_storage.get_court_packages(case.get("case_id"))
+        packages = await mongo_storage.get_court_packages(case.get("case_id"))
         if package_id in packages:
             found_package = packages[package_id]
             found_case_id = case.get("case_id")
@@ -158,7 +154,7 @@ async def submit_package_to_court(package_id: str, current_user: dict = Depends(
     court_email = found_package.get("submitted_to_court")
     
     # Get case
-    case = ipfs_storage.get_case(found_case_id)
+    case = await mongo_storage.get_case(found_case_id)
     if not case:
         return JSONResponse(
             status_code=404,
@@ -173,13 +169,13 @@ async def submit_package_to_court(package_id: str, current_user: dict = Depends(
     case["assigned_court_officer"] = court_email
     case["assigned_court_officer_name"] = found_package.get("submitted_to_court_name", court_email)
     
-    ipfs_storage.save_case(found_case_id, case)
+    await mongo_storage.update_case(found_case_id, case)
     
     # Update package status
-    packages = ipfs_storage.get_court_packages(found_case_id)
+    packages = await mongo_storage.get_court_packages(found_case_id)
     packages[package_id]["submitted_at"] = datetime.now(timezone.utc).isoformat()
     packages[package_id]["status"] = "SUBMITTED"
-    ipfs_storage.save_court_packages(found_case_id, packages)
+    await mongo_storage.save_court_packages(found_case_id, packages)
     
     return JSONResponse(
         content={
@@ -190,7 +186,7 @@ async def submit_package_to_court(package_id: str, current_user: dict = Depends(
     )
 
 
-# ============ ADD CORS OPTIONS HANDLERS ============
+# ============ CORS OPTIONS HANDLERS ============
 
 @router.options("/prepare-package")
 async def prepare_package_options():

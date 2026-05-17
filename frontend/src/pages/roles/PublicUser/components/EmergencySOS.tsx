@@ -46,8 +46,6 @@ export function EmergencySOS({
 
   useEffect(() => {
     loadContacts();
-    // Don't auto-get location on mount - let user click button
-
     const timer = setTimeout(() => setIsPulsing(false), 5000);
     return () => clearTimeout(timer);
   }, []);
@@ -257,7 +255,6 @@ export function EmergencySOS({
         "success",
       );
       setSosMessage("");
-      // Don't reset location - keep it for reference
     } catch (err) {
       console.error("SOS error:", err);
       showToast("Failed to send SOS. Please try again.", "error");
@@ -359,6 +356,25 @@ export function EmergencySOS({
 
             <div className="sos-form">
               <div className="sos-form-group">
+                <label>⚖️ Related Case</label>
+                <div className="sos-select-wrapper">
+                  <select
+                    value={selectedCase}
+                    onChange={(e) => setSelectedCase(e.target.value)}
+                  >
+                    <option value="">-- Select Related Case --</option>
+                    {cases.map((c) => (
+                      <option key={c.case_id} value={c.case_id}>
+                        {c.case_number} - {c.title}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="sos-select-icon">📋</span>
+                </div>
+              </div>
+
+              {/* LOCATION SECTION - ADDED BACK */}
+              <div className="sos-form-group">
                 <label>📍 Current Location</label>
                 <div className="sos-location-input">
                   <input
@@ -401,24 +417,6 @@ export function EmergencySOS({
                       ✓ Location: {location}
                     </div>
                   )}
-              </div>
-
-              <div className="sos-form-group">
-                <label>⚖️ Related Case </label>
-                <div className="sos-select-wrapper">
-                  <select
-                    value={selectedCase}
-                    onChange={(e) => setSelectedCase(e.target.value)}
-                  >
-                    <option value="">-- Select Related Case --</option>
-                    {cases.map((c) => (
-                      <option key={c.case_id} value={c.case_id}>
-                        {c.case_number} - {c.title}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="sos-select-icon">📋</span>
-                </div>
               </div>
 
               <div className="sos-form-group">
@@ -498,7 +496,9 @@ export function EmergencySOS({
                   </div>
                 </div>
                 <div className="sos-form-group">
-                  <label>Email (Optional)</label>
+                  <label>
+                    Email <span className="sos-required">*</span>
+                  </label>
                   <div className="sos-input-wrapper">
                     <span className="sos-input-icon">📧</span>
                     <input
@@ -607,7 +607,6 @@ export function EmergencySOS({
           100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
         }
 
-        /* Toast Styles */
         .sos-toast {
           position: fixed;
           top: 90px;
@@ -644,7 +643,6 @@ export function EmergencySOS({
         .sos-toast-icon { font-size: 1.1rem; }
         .sos-toast-message { font-size: 0.85rem; color: #e8ecf8; }
 
-        /* Loading */
         .sos-loading { padding: 24px; }
         .sos-shimmer-card {
           background: rgba(12,15,26,0.5);
@@ -665,7 +663,6 @@ export function EmergencySOS({
           100% { transform: translateX(100%); }
         }
 
-        /* Tabs */
         .sos-tabs-container {
           border-bottom: 1px solid rgba(99,102,241,0.15);
           margin-bottom: 28px;
@@ -711,7 +708,6 @@ export function EmergencySOS({
           color: #818cf8;
         }
 
-        /* SOS Alert Card */
         .sos-alert-card {
           background: linear-gradient(135deg, rgba(239,68,68,0.12), rgba(220,38,38,0.06));
           border: 1px solid rgba(239,68,68,0.3);
@@ -742,7 +738,6 @@ export function EmergencySOS({
         .sos-alert-btn:disabled { opacity: 0.6; cursor: not-allowed; }
         .sos-alert-warning { margin-top: 20px; padding: 10px; background: rgba(239,68,68,0.08); border-radius: 8px; color: #f87171; font-size: 0.8rem; }
 
-        /* Details Card */
         .sos-details-card {
           background: rgba(12,15,26,0.6);
           backdrop-filter: blur(10px);
@@ -754,7 +749,6 @@ export function EmergencySOS({
         .sos-details-header h3 { font-size: 1.1rem; font-weight: 600; color: #e8ecf8; margin-bottom: 6px; }
         .sos-details-header p { font-size: 0.8rem; color: #7a849c; }
 
-        /* Form */
         .sos-form { display: flex; flex-direction: column; gap: 20px; }
         .sos-form-group { display: flex; flex-direction: column; gap: 8px; }
         .sos-form-group label { font-size: 0.8rem; font-weight: 600; color: #7a849c; }
@@ -822,7 +816,6 @@ export function EmergencySOS({
           color: #3d4459;
         }
 
-        /* Contacts */
         .sos-contacts-container { display: flex; flex-direction: column; gap: 24px; }
         .sos-add-contact-card, .sos-contacts-list-card {
           background: rgba(12,15,26,0.6);

@@ -12,11 +12,7 @@ export { PrivacyPage } from "./legal/PrivacyPage";
 
 // Public Pages (landing page)
 export { HomePage } from "./public/HomePage";
+export { AdminView } from "./roles/Admin/AdminView";
 
 // Role Pages (all role‑specific views)
 export * from "./roles";
-
-// Additional Pages (blockchain explorer, payments, video call)
-export { BlockchainViewer } from "./blockchain/BlockchainViewer";
-export { FinePayment } from "./payments/FinePayment";
-export { VideoCall } from "./video/VideoCall";

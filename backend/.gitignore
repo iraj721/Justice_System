@@ -17,30 +17,12 @@ data/
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-env/
 venv/
-ENV/
-env.bak/
-venv.bak/
+env/
 
 # IDE
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
 
 # Logs
-logs/
 *.log
-uvicorn.log
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Blockchain artifacts (optional, can commit)
-# blockchain/artifacts/ - isko commit kar sakte ho

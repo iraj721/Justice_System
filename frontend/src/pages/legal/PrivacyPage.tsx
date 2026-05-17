@@ -24,8 +24,12 @@ export function PrivacyPage() {
           <span className="privacy-logo-text">Decentralized Justice</span>
         </Link>
         <div className="privacy-nav-right">
-          <Link to="/login" className="privacy-nav-solid">Sign In</Link>
-          <Link to="/register" className="privacy-nav-outline">Register</Link>
+          <Link to="/login" className="privacy-nav-solid">
+            Sign In
+          </Link>
+          <Link to="/register" className="privacy-nav-outline">
+            Register
+          </Link>
         </div>
       </nav>
 
@@ -33,77 +37,90 @@ export function PrivacyPage() {
       <main className="privacy-main">
         <div className="privacy-card">
           <div className="privacy-card-glow" />
-          
+
           <div className="privacy-card-head">
             <div className="privacy-card-eyebrow">Data Protection</div>
             <h1 className="privacy-card-title">
               Privacy <span className="privacy-grad">Policy</span>
             </h1>
-            <p className="privacy-card-sub">
-              Last updated: January 1, 2024
-            </p>
+            <p className="privacy-card-sub">Last updated: January 1, 2024</p>
           </div>
 
           <div className="privacy-content">
             <section className="privacy-section">
               <h2>1. Information We Collect</h2>
               <p>
-                <strong>Personal Information:</strong> Name, email address, phone number, 
-                physical address, CNIC number, and role in the justice system.<br />
-                <strong>Case Information:</strong> FIR details, evidence submissions, 
-                investigation records, and court proceedings.<br />
-                <strong>Technical Data:</strong> IP address, device information, browser 
-                type, and usage logs.
+                <strong>Personal Information:</strong> Name, email address,
+                phone number, physical address, CNIC number, and role in the
+                justice system.
+                <br />
+                <strong>Case Information:</strong> FIR details, evidence
+                submissions, investigation records, and court proceedings.
+                <br />
+                <strong>Technical Data:</strong> IP address, device information,
+                browser type, and usage logs.
               </p>
             </section>
 
             <section className="privacy-section">
               <h2>2. How We Use Your Information</h2>
               <p>
-                2.1 To process and manage legal cases and FIRs.<br />
-                2.2 To verify your identity and role in the justice system.<br />
-                2.3 To communicate case updates and notifications.<br />
-                2.4 To improve platform security and performance.<br />
+                2.1 To process and manage legal cases and FIRs.
+                <br />
+                2.2 To verify your identity and role in the justice system.
+                <br />
+                2.3 To communicate case updates and notifications.
+                <br />
+                2.4 To improve platform security and performance.
+                <br />
                 2.5 To comply with legal and regulatory requirements.
               </p>
             </section>
 
             <section className="privacy-section">
-              <h2>3. Blockchain & Data Immutability</h2>
+              <h2>3. Data Integrity & Security</h2>
               <p>
-                Case records, evidence hashes, and judicial decisions are stored on 
-                the blockchain. Once recorded, this data becomes immutable and 
-                publicly verifiable. Personal identifiable information is NOT stored 
-                directly on the blockchain; only hashed references are used.
+                Case records, evidence hashes, and judicial decisions are stored
+                on secure cloud infrastructure with cryptographic verification.
+                Once recorded, this data becomes tamper-evident and publicly
+                verifiable through hash matching. Personal identifiable
+                information is encrypted and access-controlled.
               </p>
             </section>
 
             <section className="privacy-section">
               <h2>4. Data Security</h2>
               <p>
-                We implement 256-bit AES encryption for stored data. All communications 
-                use TLS 1.3 protocols. Access to sensitive data is restricted based on 
-                role-based access control (RBAC). Regular security audits are conducted.
+                We implement 256-bit AES encryption for stored data. All
+                communications use TLS 1.3 protocols. Access to sensitive data
+                is restricted based on role-based access control (RBAC). Regular
+                security audits are conducted.
               </p>
             </section>
 
             <section className="privacy-section">
               <h2>5. Data Sharing</h2>
               <p>
-                We share information only with authorized parties in the justice system:
-                police, forensic labs, and courts. Your data is never sold to third 
-                parties. Law enforcement requests are honored only with valid legal orders.
+                We share information only with authorized parties in the justice
+                system: police, forensic labs, and courts. Your data is never
+                sold to third parties. Law enforcement requests are honored only
+                with valid legal orders.
               </p>
             </section>
 
             <section className="privacy-section">
               <h2>6. Your Rights</h2>
               <p>
-                6.1 Right to access your personal data.<br />
-                6.2 Right to correct inaccurate information.<br />
-                6.3 Right to request deletion (subject to legal retention).<br />
-                6.4 Right to data portability.<br />
-                6.5 Right to withdraw consent.<br />
+                6.1 Right to access your personal data.
+                <br />
+                6.2 Right to correct inaccurate information.
+                <br />
+                6.3 Right to request deletion (subject to legal retention).
+                <br />
+                6.4 Right to data portability.
+                <br />
+                6.5 Right to withdraw consent.
+                <br />
                 6.6 Right to file a complaint with data protection authority.
               </p>
             </section>
@@ -111,53 +128,58 @@ export function PrivacyPage() {
             <section className="privacy-section">
               <h2>7. Data Retention</h2>
               <p>
-                Personal data is retained as long as your account is active. Case 
-                records are retained permanently for legal compliance. You may request 
-                account deletion, but case records may remain for evidentiary purposes.
+                Personal data is retained as long as your account is active.
+                Case records are retained permanently for legal compliance. You
+                may request account deletion, but case records may remain for
+                evidentiary purposes.
               </p>
             </section>
 
             <section className="privacy-section">
               <h2>8. Cookies & Tracking</h2>
               <p>
-                We use essential cookies for authentication and security. No third-party 
-                tracking cookies are used. You can disable cookies in your browser, 
-                but some features may not function properly.
+                We use essential cookies for authentication and security. No
+                third-party tracking cookies are used. You can disable cookies
+                in your browser, but some features may not function properly.
               </p>
             </section>
 
             <section className="privacy-section">
               <h2>9. Children's Privacy</h2>
               <p>
-                Our platform is not intended for users under 18 years of age. We do not 
-                knowingly collect information from minors. If you believe a minor has 
-                provided data, please contact us immediately.
+                Our platform is not intended for users under 18 years of age. We
+                do not knowingly collect information from minors. If you believe
+                a minor has provided data, please contact us immediately.
               </p>
             </section>
 
             <section className="privacy-section">
               <h2>10. International Data Transfers</h2>
               <p>
-                Data is stored on servers located within Pakistan. By using our platform, 
-                you consent to data processing within Pakistan's jurisdiction.
+                Data is stored on servers located within Pakistan. By using our
+                platform, you consent to data processing within Pakistan's
+                jurisdiction.
               </p>
             </section>
 
             <section className="privacy-section">
               <h2>11. Changes to This Policy</h2>
               <p>
-                We may update this policy periodically. Significant changes will be 
-                notified via email or platform notification. Continued use constitutes 
-                acceptance of the updated policy.
+                We may update this policy periodically. Significant changes will
+                be notified via email or platform notification. Continued use
+                constitutes acceptance of the updated policy.
               </p>
             </section>
 
             <section className="privacy-section">
               <h2>12. Contact Us</h2>
               <p>
-                For privacy concerns or data requests:<br />
-                Email: privacy@justice.gov.pk<br />
-                Phone: 1234-567890<br />
+                For privacy concerns or data requests:
+                <br />
+                Email: privacy@justice.gov.pk
+                <br />
+                Phone: 1234-567890
+                <br />
                 Address: Justice Complex, Islamabad, Pakistan
               </p>
             </section>

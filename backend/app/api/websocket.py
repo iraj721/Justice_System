@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import logging
 
 from app.core.security import decode_token
-from app.services.ipfs_storage import ipfs_storage
+from app.services.mongo_storage import mongo_storage
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -144,7 +144,7 @@ async def case_websocket(websocket: WebSocket, case_id: str):
         return
     
     # Verify access
-    case = ipfs_storage.get_case(case_id)
+    case = await mongo_storage.get_case(case_id)
     if not case:
         await websocket.close(code=1004, reason="Case not found")
         return
@@ -167,7 +167,7 @@ async def case_websocket(websocket: WebSocket, case_id: str):
             if data == "ping":
                 await websocket.send_json({"type": "pong"})
             elif data == "refresh":
-                fresh_case = ipfs_storage.get_case(case_id)
+                fresh_case = await mongo_storage.get_case(case_id)
                 await websocket.send_json({
                     "type": "case_update",
                     "data": fresh_case

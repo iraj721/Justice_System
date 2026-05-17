@@ -7,8 +7,7 @@ import uuid
 import hashlib
 from app.core.authz import require_roles
 from app.core.roles import UserRole
-from app.services.ipfs_storage import ipfs_storage
-from app.core.ipfs_client import ipfs_client
+from app.services.mongo_storage import mongo_storage
 
 router = APIRouter(prefix="/forensic/analysis", tags=["Forensic Analysis"])
 
@@ -94,7 +93,7 @@ async def get_analysis_templates(current_user: dict = Depends(require_roles(User
 @router.post("/analyze")
 async def perform_analysis(payload: AnalysisRequest, current_user: dict = Depends(require_roles(UserRole.FORENSIC_ANALYST))):
     """Perform forensic analysis on evidence"""
-    evidence = ipfs_storage.get_evidence(payload.evidence_id)
+    evidence = await mongo_storage.get_evidence(payload.evidence_id)
     if not evidence:
         raise HTTPException(status_code=404, detail="Evidence not found")
     
@@ -103,7 +102,7 @@ async def perform_analysis(payload: AnalysisRequest, current_user: dict = Depend
     evidence["analysis_started_at"] = datetime.now(timezone.utc).isoformat()
     evidence["analyzed_by"] = current_user["email"]
     evidence["analyzed_by_name"] = current_user.get("full_name")
-    ipfs_storage.save_evidence(payload.evidence_id, evidence)
+    await mongo_storage.save_evidence(payload.evidence_id, evidence)
     
     # Create analysis record
     analysis_id = f"ANALYSIS-{uuid.uuid4().hex[:8].upper()}"
@@ -126,22 +125,22 @@ async def perform_analysis(payload: AnalysisRequest, current_user: dict = Depend
     }
     
     # Save analysis
-    analyses = ipfs_storage.get_evidence_analyses(payload.evidence_id)
+    analyses = await mongo_storage.get_evidence_analyses(payload.evidence_id)
     analyses[analysis_id] = analysis
-    ipfs_storage.save_evidence_analyses(payload.evidence_id, analyses)
+    await mongo_storage.save_evidence_analyses(payload.evidence_id, analyses)
     
     # Update evidence status
     evidence["analysis_status"] = "COMPLETED"
     evidence["analysis_completed_at"] = datetime.now(timezone.utc).isoformat()
     evidence["analysis_id"] = analysis_id
-    ipfs_storage.save_evidence(payload.evidence_id, evidence)
+    await mongo_storage.save_evidence(payload.evidence_id, evidence)
     
     return analysis
 
 @router.get("/queue")
 async def get_analysis_queue(current_user: dict = Depends(require_roles(UserRole.FORENSIC_ANALYST))):
     """Get evidence awaiting analysis"""
-    all_evidence = ipfs_storage.get_all_evidence()
+    all_evidence = await mongo_storage.get_all_evidence()
     queue = [e for e in all_evidence if e.get("analysis_status") == "PENDING" or e.get("analysis_status") is None]
     
     # Add to queue list
@@ -152,7 +151,7 @@ async def get_analysis_queue(current_user: dict = Depends(require_roles(UserRole
             "case_id": e.get("case_id"),
             "title": e.get("title"),
             "description": e.get("description"),
-            "ipfs_cid": e.get("ipfs_cid"),
+            "cloudinary_url": e.get("cloudinary_url") or e.get("ipfs_cid"),
             "hash": e.get("hash"),
             "priority": e.get("priority", "MEDIUM"),
             "submitted_by": e.get("created_by"),
@@ -164,11 +163,11 @@ async def get_analysis_queue(current_user: dict = Depends(require_roles(UserRole
 @router.get("/my-analyses")
 async def get_my_analyses(current_user: dict = Depends(require_roles(UserRole.FORENSIC_ANALYST))):
     """Get all analyses performed by current analyst"""
-    all_evidence = ipfs_storage.get_all_evidence()
+    all_evidence = await mongo_storage.get_all_evidence()
     my_analyses = []
     
     for evidence in all_evidence:
-        analyses = ipfs_storage.get_evidence_analyses(evidence.get("evidence_id"))
+        analyses = await mongo_storage.get_evidence_analyses(evidence.get("evidence_id"))
         for analysis in analyses.values():
             if analysis.get("analyzed_by") == current_user["email"]:
                 my_analyses.append({
@@ -185,23 +184,23 @@ async def get_my_analyses(current_user: dict = Depends(require_roles(UserRole.FO
 @router.get("/evidence/{evidence_id}/analyses")
 async def get_evidence_analyses(evidence_id: str, current_user: dict = Depends(require_roles(UserRole.FORENSIC_ANALYST))):
     """Get all analyses for specific evidence"""
-    evidence = ipfs_storage.get_evidence(evidence_id)
+    evidence = await mongo_storage.get_evidence(evidence_id)
     if not evidence:
         raise HTTPException(status_code=404, detail="Evidence not found")
     
-    analyses = ipfs_storage.get_evidence_analyses(evidence_id)
+    analyses = await mongo_storage.get_evidence_analyses(evidence_id)
     return list(analyses.values())
 
 @router.post("/request-review")
 async def request_review(payload: ReviewRequest, current_user: dict = Depends(require_roles(UserRole.FORENSIC_ANALYST))):
     """Request peer review of analysis report"""
     # Find analysis
-    all_evidence = ipfs_storage.get_all_evidence()
+    all_evidence = await mongo_storage.get_all_evidence()
     found_analysis = None
     found_evidence_id = None
     
     for evidence in all_evidence:
-        analyses = ipfs_storage.get_evidence_analyses(evidence.get("evidence_id"))
+        analyses = await mongo_storage.get_evidence_analyses(evidence.get("evidence_id"))
         if payload.report_id in analyses:
             found_analysis = analyses[payload.report_id]
             found_evidence_id = evidence.get("evidence_id")
@@ -211,21 +210,21 @@ async def request_review(payload: ReviewRequest, current_user: dict = Depends(re
         raise HTTPException(status_code=404, detail="Analysis not found")
     
     # Update analysis
-    analyses = ipfs_storage.get_evidence_analyses(found_evidence_id)
+    analyses = await mongo_storage.get_evidence_analyses(found_evidence_id)
     analyses[payload.report_id]["review_status"] = payload.status
     analyses[payload.report_id]["review_comments"].append({
         "comment": payload.comments,
         "reviewed_by": current_user["email"],
         "reviewed_at": datetime.now(timezone.utc).isoformat()
     })
-    ipfs_storage.save_evidence_analyses(found_evidence_id, analyses)
+    await mongo_storage.save_evidence_analyses(found_evidence_id, analyses)
     
     return {"message": f"Analysis {payload.status}", "analysis": analyses[payload.report_id]}
 
 @router.get("/stats")
 async def get_forensic_stats(current_user: dict = Depends(require_roles(UserRole.FORENSIC_ANALYST))):
     """Get forensic analyst statistics"""
-    all_evidence = ipfs_storage.get_all_evidence()
+    all_evidence = await mongo_storage.get_all_evidence()
     
     # Evidence stats
     total_evidence = len(all_evidence)
@@ -236,7 +235,7 @@ async def get_forensic_stats(current_user: dict = Depends(require_roles(UserRole
     # My analyses
     my_analyses_count = 0
     for evidence in all_evidence:
-        analyses = ipfs_storage.get_evidence_analyses(evidence.get("evidence_id"))
+        analyses = await mongo_storage.get_evidence_analyses(evidence.get("evidence_id"))
         for analysis in analyses.values():
             if analysis.get("analyzed_by") == current_user["email"]:
                 my_analyses_count += 1
@@ -244,7 +243,7 @@ async def get_forensic_stats(current_user: dict = Depends(require_roles(UserRole
     # Analysis types breakdown
     analysis_types = {}
     for evidence in all_evidence:
-        analyses = ipfs_storage.get_evidence_analyses(evidence.get("evidence_id"))
+        analyses = await mongo_storage.get_evidence_analyses(evidence.get("evidence_id"))
         for analysis in analyses.values():
             atype = analysis.get("analysis_type", "UNKNOWN")
             analysis_types[atype] = analysis_types.get(atype, 0) + 1
@@ -267,7 +266,7 @@ async def get_forensic_reports_by_case(
     current_user: dict = Depends(require_roles(UserRole.COURT, UserRole.INVESTIGATOR))
 ):
     """Get all forensic reports for a specific case"""
-    all_evidence = ipfs_storage.get_all_evidence()
+    all_evidence = await mongo_storage.get_all_evidence()
     
     # Find all evidence for this case
     case_evidence = [e for e in all_evidence if e.get("case_id") == case_id]
@@ -276,7 +275,7 @@ async def get_forensic_reports_by_case(
     for evidence in case_evidence:
         if evidence.get("forensic_report_id"):
             # Get full report
-            forensic_reports = ipfs_storage.get_forensic_reports()
+            forensic_reports = await mongo_storage.get_forensic_reports()
             report = forensic_reports.get(evidence.get("forensic_report_id"))
             if report:
                 reports.append({

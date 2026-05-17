@@ -19,7 +19,7 @@ type CourtPackage = {
     total_witnesses: number;
     case_duration_days: number;
   };
-  ipfs_cid?: string;
+  storage_cid?: string;  // Changed from ipfs_cid to storage_cid (MongoDB reference)
   status?: string;
 };
 
@@ -244,13 +244,13 @@ export function CourtPackage({ token, cases, caseId }: { token: string; cases: a
                         Preparing...
                       </>
                     ) : (
-                      "📦 Prepare & Submit Package"
+                      "📦 Prepare Package"
                     )}
                   </button>
                 </div>
               </div>
 
-              {/* Package Contents Info */}
+              {/* Package Contents Info - Updated */}
               <div className="cpkg-info-box">
                 <div className="cpkg-info-header">
                   <span className="cpkg-info-icon">📋</span>
@@ -259,12 +259,12 @@ export function CourtPackage({ token, cases, caseId }: { token: string; cases: a
                 <div className="cpkg-info-grid">
                   <div className="cpkg-info-item">✓ Complete FIR details</div>
                   <div className="cpkg-info-item">✓ Case investigation summary</div>
-                  <div className="cpkg-info-item">✓ All evidence with IPFS CIDs and hashes</div>
+                  <div className="cpkg-info-item">✓ All evidence with Cloudinary URLs and verification hashes</div>
                   <div className="cpkg-info-item">✓ Evidence verification status</div>
                   <div className="cpkg-info-item">✓ Suspect and witness information</div>
                   <div className="cpkg-info-item">✓ Investigation timeline</div>
                   <div className="cpkg-info-item">✓ Investigator notes</div>
-                  <div className="cpkg-info-item">✓ Blockchain verification proofs</div>
+                  <div className="cpkg-info-item">✓ Document verification proofs</div>
                 </div>
               </div>
             </div>
@@ -375,17 +375,19 @@ export function CourtPackage({ token, cases, caseId }: { token: string; cases: a
 
                       {expandedPackage === pkg.package_id && (
                         <div className="cpkg-package-expanded">
-                          {pkg.ipfs_cid && (
+                          {/* Changed from ipfs_cid to storage_cid */}
+                          {pkg.storage_cid && (
                             <div className="cpkg-expanded-section">
-                              <strong>🔗 IPFS CID:</strong>
-                              <code className="cpkg-cid">{pkg.ipfs_cid}</code>
+                              <strong>🔗 Package Storage Reference:</strong>
+                              <code className="cpkg-cid">{pkg.storage_cid}</code>
+                              <div className="cpkg-storage-note">Stored securely in MongoDB database</div>
                             </div>
                           )}
                           <div className="cpkg-expanded-section">
                             <strong>📋 Package Contents:</strong>
                             <div className="cpkg-contents-list">
                               {pkg.contents?.evidence?.length > 0 && (
-                                <div>• {pkg.contents.evidence.length} Evidence items</div>
+                                <div>• {pkg.contents.evidence.length} Evidence items (Cloudinary)</div>
                               )}
                               {pkg.contents?.suspects?.length > 0 && (
                                 <div>• {pkg.contents.suspects.length} Suspects identified</div>
@@ -394,7 +396,7 @@ export function CourtPackage({ token, cases, caseId }: { token: string; cases: a
                                 <div>• {pkg.contents.witnesses.length} Witnesses recorded</div>
                               )}
                               <div>• Complete investigation timeline</div>
-                              <div>• Blockchain verification records</div>
+                              <div>• Digital verification records</div>
                             </div>
                           </div>
                           <div className="cpkg-expanded-section">
@@ -966,6 +968,12 @@ export function CourtPackage({ token, cases, caseId }: { token: string; cases: a
           padding: 8px;
           border-radius: 8px;
           display: block;
+        }
+
+        .cpkg-storage-note {
+          font-size: 0.65rem;
+          color: #3d4459;
+          margin-top: 4px;
         }
 
         .cpkg-contents-list {

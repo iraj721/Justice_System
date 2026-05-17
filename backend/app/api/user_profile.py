@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from app.core.authz import get_current_user
 from app.core.security import verify_password, hash_password
-from app.services.ipfs_storage import ipfs_storage
+from app.services.mongo_storage import mongo_storage
 import json
 import os
 
@@ -85,9 +85,9 @@ def get_estimated_time(status: str) -> str:
     }
     return estimates.get(status, "Timeline to be announced")
 
-def get_user_activity(email: str, limit: int = 10) -> List[Dict]:
+async def get_user_activity(email: str, limit: int = 10) -> List[Dict]:
     """Get recent user activity"""
-    all_firs = ipfs_storage.get_all_firs()
+    all_firs = await mongo_storage.get_all_firs()
     user_firs = [f for f in all_firs if f.get("complainant_email") == email]
     
     activities = []
@@ -117,7 +117,7 @@ def get_user_activity(email: str, limit: int = 10) -> List[Dict]:
     activities.sort(key=lambda x: x.get("date", ""), reverse=True)
     return activities[:limit]
 
-def generate_fir_timeline(fir: dict, case: dict = None) -> List[Dict]:
+async def generate_fir_timeline(fir: dict, case: dict = None) -> List[Dict]:
     """Generate complete timeline for FIR"""
     timeline = []
     
@@ -173,7 +173,7 @@ def generate_fir_timeline(fir: dict, case: dict = None) -> List[Dict]:
         
         # 4. Evidence added
         for ev_id in case.get("evidence", []):
-            ev = ipfs_storage.get_evidence(ev_id)
+            ev = await mongo_storage.get_evidence(ev_id)
             if ev:
                 timeline.append({
                     "date": ev.get("created_at"),
@@ -209,16 +209,16 @@ def generate_fir_timeline(fir: dict, case: dict = None) -> List[Dict]:
 @router.get("/profile")
 async def get_my_profile(current_user: dict = Depends(get_current_user)):
     """Get complete user profile with statistics"""
-    user = ipfs_storage.get_user(current_user["email"])
+    user = await mongo_storage.get_user(current_user["email"])
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
     # Get user's FIRs
-    all_firs = ipfs_storage.get_all_firs()
+    all_firs = await mongo_storage.get_all_firs()
     my_firs = [f for f in all_firs if f.get("complainant_email") == current_user["email"]]
     
     # Get cases related to user's FIRs
-    all_cases = ipfs_storage.get_all_cases()
+    all_cases = await mongo_storage.get_all_cases()
     my_cases = [c for c in all_cases if c.get("fir_id") in [f.get("fir_id") for f in my_firs]]
     
     # Calculate statistics
@@ -226,7 +226,7 @@ async def get_my_profile(current_user: dict = Depends(get_current_user)):
     resolved_cases = [c for c in my_cases if c.get("status") in ["DECIDED", "CLOSED"]]
     
     # Get recent activity
-    recent_activity = get_user_activity(current_user["email"])
+    recent_activity = await get_user_activity(current_user["email"])
     
     # Get notification preferences
     notification_prefs = user.get("notification_preferences", {
@@ -270,7 +270,7 @@ async def update_profile(
     current_user: dict = Depends(get_current_user)
 ):
     """Update user profile information"""
-    user = ipfs_storage.get_user(current_user["email"])
+    user = await mongo_storage.get_user(current_user["email"])
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
@@ -279,7 +279,7 @@ async def update_profile(
     user.update(update_data)
     user["updated_at"] = datetime.now(timezone.utc).isoformat()
     
-    ipfs_storage.save_user(current_user["email"], user)
+    await mongo_storage.save_user(current_user["email"], user)
     
     return {
         "message": "Profile updated successfully",
@@ -317,19 +317,19 @@ async def update_notification_preferences(
     current_user: dict = Depends(get_current_user)
 ):
     """Update user's notification preferences"""
-    user = ipfs_storage.get_user(current_user["email"])
+    user = await mongo_storage.get_user(current_user["email"])
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
     user["notification_preferences"] = payload.dict()
-    ipfs_storage.save_user(current_user["email"], user)
+    await mongo_storage.save_user(current_user["email"], user)
     
     return {"message": "Notification preferences updated"}
 
 @router.get("/my-firs")
 async def get_my_complete_firs(current_user: dict = Depends(get_current_user)):
     """Get all FIRs with detailed status and case info"""
-    all_firs = ipfs_storage.get_all_firs()
+    all_firs = await mongo_storage.get_all_firs()
     my_firs = []
     
     for fir in all_firs:
@@ -337,7 +337,7 @@ async def get_my_complete_firs(current_user: dict = Depends(get_current_user)):
             # Get associated case if exists
             case = None
             if fir.get("case_id"):
-                case = ipfs_storage.get_case(fir.get("case_id"))
+                case = await mongo_storage.get_case(fir.get("case_id"))
             
             # Calculate progress
             current_status = case.get("status") if case else fir.get("status")
@@ -358,7 +358,7 @@ async def get_my_complete_firs(current_user: dict = Depends(get_current_user)):
                 "investigator": case.get("investigator_name") if case else None,
                 "progress_percentage": progress,
                 "current_stage": current_status.replace("_", " "),
-                "timeline": generate_fir_timeline(fir, case)
+                "timeline": await generate_fir_timeline(fir, case)
             })
     
     return sorted(my_firs, key=lambda x: x["created_at"], reverse=True)
@@ -369,12 +369,12 @@ async def track_case_progress(
     current_user: dict = Depends(get_current_user)
 ):
     """Track case progress with percentage and next steps"""
-    case = ipfs_storage.get_case(case_id)
+    case = await mongo_storage.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
     # Verify ownership through FIR
-    fir = ipfs_storage.get_fir(case.get("fir_id"))
+    fir = await mongo_storage.get_fir(case.get("fir_id"))
     if not fir or fir.get("complainant_email") != current_user["email"]:
         raise HTTPException(status_code=403, detail="Access denied. This is not your case.")
     
@@ -399,16 +399,16 @@ async def get_case_timeline(
     current_user: dict = Depends(get_current_user)
 ):
     """Get visual timeline for a case"""
-    case = ipfs_storage.get_case(case_id)
+    case = await mongo_storage.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
     # Verify ownership
-    fir = ipfs_storage.get_fir(case.get("fir_id"))
+    fir = await mongo_storage.get_fir(case.get("fir_id"))
     if not fir or fir.get("complainant_email") != current_user["email"]:
         raise HTTPException(status_code=403, detail="Access denied")
     
-    timeline = generate_fir_timeline(fir, case)
+    timeline = await generate_fir_timeline(fir, case)
     
     return {
         "case_id": case_id,
@@ -421,7 +421,7 @@ async def get_case_timeline(
 @router.get("/dashboard-stats")
 async def get_user_dashboard_stats(current_user: dict = Depends(get_current_user)):
     """Get quick stats for user dashboard"""
-    all_firs = ipfs_storage.get_all_firs()
+    all_firs = await mongo_storage.get_all_firs()
     my_firs = [f for f in all_firs if f.get("complainant_email") == current_user["email"]]
     
     # Count FIRs by status
@@ -449,8 +449,8 @@ async def get_user_dashboard_stats(current_user: dict = Depends(get_current_user
 @router.post("/update-last-login")
 async def update_last_login(current_user: dict = Depends(get_current_user)):
     """Update user's last login timestamp"""
-    user = ipfs_storage.get_user(current_user["email"])
+    user = await mongo_storage.get_user(current_user["email"])
     if user:
         user["last_login"] = datetime.now(timezone.utc).isoformat()
-        ipfs_storage.save_user(current_user["email"], user)
+        await mongo_storage.save_user(current_user["email"], user)
     return {"status": "ok"}

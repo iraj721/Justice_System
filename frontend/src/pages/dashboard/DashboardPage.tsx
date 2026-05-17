@@ -1,5 +1,6 @@
 // frontend/src/pages/dashboard/DashboardPage.tsx
 import { useEffect, useState, useCallback } from "react";
+import { useSessionTimeout } from "../../shared/hooks/useSessionTimeout";
 import { useNavigate } from "react-router-dom";
 import { getRole, getToken, getUser, logout } from "../../shared/services/auth";
 import { apiRequest } from "../../shared/services/apiClient";
@@ -22,6 +23,7 @@ import { Link } from "react-router-dom";
 import { ReceivedMessages } from "../roles/PublicUser/components/ReceivedMessages";
 import { CaseTracker } from "../roles/PublicUser/components/CaseTracker";
 import { UserHearings } from "../roles/PublicUser/components/UserHearings";
+import { AdminView } from "../roles/Admin/AdminView";
 
 type DashboardContext = {
   email: string;
@@ -50,7 +52,7 @@ type EvidenceType = {
   case_id: string;
   title: string;
   description: string;
-  ipfs_cid: string;
+  cloudinary_url?: string;
   status: string;
   hash: string;
 };
@@ -60,7 +62,7 @@ type ForensicQueueType = {
   case_id: string;
   title: string;
   description: string;
-  ipfs_cid: string;
+  cloudinary_url?: string;
   status: string;
 };
 
@@ -75,6 +77,7 @@ export function DashboardPage() {
   const user = getUser();
   const [activeTab, setActiveTab] = useState("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { showWarning, timeLeft, extendSession } = useSessionTimeout();
   const [userCases, setUserCases] = useState<CaseType[]>([]);
 
   // Forensic Analyst State
@@ -438,7 +441,6 @@ export function DashboardPage() {
               </div>
             </div>
           )}
-
           {/* Welcome Header */}
           <div className="dashboard-header">
             <div className="dashboard-header-content">
@@ -469,13 +471,33 @@ export function DashboardPage() {
               </div>
             </div>
           </div>
-
           {message && (
             <div className="dashboard-toast">
               <span>✓ {message}</span>
             </div>
           )}
-
+                {/* Session Timeout Warning Modal */}
+      {showWarning && (
+        <div className="modal-overlay" onClick={extendSession}>
+          <div className="modal session-warning-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>⚠️ Session Expiring Soon</h3>
+            </div>
+            <div className="modal-body">
+              <p>Your session will expire in <strong>{timeLeft} minute{timeLeft !== 1 ? 's' : ''}</strong>.</p>
+              <p>Click "Continue Session" to stay logged in.</p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn-danger" onClick={() => window.location.href = '/login'}>
+                Logout
+              </button>
+              <button className="btn-primary" onClick={extendSession}>
+                Continue Session
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
           {/* Role Views */}
           {role === "INVESTIGATOR" && (
             <div className="dashboard-role-container">
@@ -488,7 +510,6 @@ export function DashboardPage() {
               />
             </div>
           )}
-
           {role === "FORENSIC_ANALYST" && (
             <div className="dashboard-role-container">
               <ForensicView
@@ -510,10 +531,15 @@ export function DashboardPage() {
               />
             </div>
           )}
-
           {role === "COURT" && (
             <div className="dashboard-role-container">
               <CourtView token={token!} />
+            </div>
+          )}
+
+          {role === "ADMIN" && (
+            <div className="dashboard-role-container">
+              <AdminView token={token!} />
             </div>
           )}
 
@@ -1382,6 +1408,15 @@ export function DashboardPage() {
             font-size: 0.7rem;
           }
         }
+          .session-warning-modal {
+  max-width: 400px;
+  animation: pulse 0.5s ease-in-out;
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+}
       `}</style>
     </div>
   );

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import uuid
 from app.core.authz import require_roles
 from app.core.roles import UserRole
-from app.services.ipfs_storage import ipfs_storage
+from app.services.mongo_storage import mongo_storage
 
 router = APIRouter(prefix="/investigator/search", tags=["Investigator Search"])
 
@@ -21,7 +21,7 @@ async def search_cases(
     current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))
 ):
     """Advanced search for cases"""
-    all_cases = ipfs_storage.get_all_cases()
+    all_cases = await mongo_storage.get_all_cases()
     my_cases = [c for c in all_cases if c.get("investigator_email") == current_user["email"]]
     
     results = my_cases
@@ -36,12 +36,18 @@ async def search_cases(
     
     # Filter by date range
     if from_date:
-        from_dt = datetime.fromisoformat(from_date).date()
-        results = [c for c in results if datetime.fromisoformat(c.get("created_at", "")).date() >= from_dt]
+        try:
+            from_dt = datetime.fromisoformat(from_date).date()
+            results = [c for c in results if datetime.fromisoformat(c.get("created_at", "")).date() >= from_dt]
+        except (ValueError, TypeError):
+            pass
     
     if to_date:
-        to_dt = datetime.fromisoformat(to_date).date()
-        results = [c for c in results if datetime.fromisoformat(c.get("created_at", "")).date() <= to_dt]
+        try:
+            to_dt = datetime.fromisoformat(to_date).date()
+            results = [c for c in results if datetime.fromisoformat(c.get("created_at", "")).date() <= to_dt]
+        except (ValueError, TypeError):
+            pass
     
     # Search by FIR number
     if fir_number:
@@ -51,7 +57,7 @@ async def search_cases(
     if complainant_name:
         filtered_results = []
         for case in results:
-            fir = ipfs_storage.get_fir(case.get("fir_id"))
+            fir = await mongo_storage.get_fir(case.get("fir_id"))
             if fir and complainant_name.lower() in fir.get("complainant_name", "").lower():
                 filtered_results.append(case)
         results = filtered_results
@@ -70,7 +76,7 @@ async def search_cases(
     # Add FIR details to results
     enriched_results = []
     for case in results:
-        fir = ipfs_storage.get_fir(case.get("fir_id"))
+        fir = await mongo_storage.get_fir(case.get("fir_id"))
         enriched_results.append({
             "case": case,
             "fir": {
@@ -90,7 +96,7 @@ async def search_cases(
 @router.get("/saved-searches")
 async def get_saved_searches(current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
     """Get saved search queries"""
-    saved = ipfs_storage.get_saved_searches(current_user["email"])
+    saved = await mongo_storage.get_saved_searches(current_user["email"])
     return list(saved.values())
 
 @router.post("/save-search")
@@ -101,7 +107,7 @@ async def save_search(
 ):
     """Save a search query for later use"""
     search_id = str(uuid.uuid4())[:8]
-    saved_searches = ipfs_storage.get_saved_searches(current_user["email"])
+    saved_searches = await mongo_storage.get_saved_searches(current_user["email"])
     
     saved_searches[search_id] = {
         "id": search_id,
@@ -110,14 +116,14 @@ async def save_search(
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     
-    ipfs_storage.save_saved_searches(current_user["email"], saved_searches)
+    await mongo_storage.save_saved_searches(current_user["email"], saved_searches)
     return {"id": search_id, "message": "Search saved"}
 
 @router.delete("/saved-search/{search_id}")
 async def delete_saved_search(search_id: str, current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
     """Delete a saved search"""
-    saved_searches = ipfs_storage.get_saved_searches(current_user["email"])
+    saved_searches = await mongo_storage.get_saved_searches(current_user["email"])
     if search_id in saved_searches:
         del saved_searches[search_id]
-        ipfs_storage.save_saved_searches(current_user["email"], saved_searches)
+        await mongo_storage.save_saved_searches(current_user["email"], saved_searches)
     return {"message": "Search deleted"}

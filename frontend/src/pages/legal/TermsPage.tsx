@@ -24,8 +24,12 @@ export function TermsPage() {
           <span className="terms-logo-text">Decentralized Justice</span>
         </Link>
         <div className="terms-nav-right">
-          <Link to="/login" className="terms-nav-solid">Sign In</Link>
-          <Link to="/register" className="terms-nav-outline">Register</Link>
+          <Link to="/login" className="terms-nav-solid">
+            Sign In
+          </Link>
+          <Link to="/register" className="terms-nav-outline">
+            Register
+          </Link>
         </div>
       </nav>
 
@@ -97,12 +101,12 @@ export function TermsPage() {
             </section>
 
             <section className="terms-section">
-              <h2>5. Blockchain & Data Immutability</h2>
+              <h2>5. Data Integrity & Record Keeping</h2>
               <p>
                 All case records, evidence hashes, and judicial decisions are
-                stored on the blockchain. Once recorded, data cannot be altered
-                or deleted. This ensures transparency and tamper-proof
-                record-keeping.
+                stored on secure cloud infrastructure with cryptographic
+                verification. Once recorded, data cannot be altered or deleted.
+                This ensures transparency and tamper-evident record-keeping.
               </p>
             </section>
 

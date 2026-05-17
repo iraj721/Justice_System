@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Optional
 import uuid
 from app.core.authz import get_current_user
-from app.services.ipfs_storage import ipfs_storage
+from app.services.mongo_storage import mongo_storage
 
 router = APIRouter(prefix="/fir/draft", tags=["FIR Drafts"])
 
@@ -26,7 +26,7 @@ class FIRDraftRequest(BaseModel):
 @router.post("/save")
 async def save_draft(payload: FIRDraftRequest, current_user: dict = Depends(get_current_user)):
     """Save FIR as draft (not submitted yet)"""
-    drafts = ipfs_storage.get_user_drafts(current_user["email"])
+    drafts = await mongo_storage.get_user_drafts(current_user["email"])
     
     if payload.draft_id and payload.draft_id in drafts:
         # Update existing draft
@@ -44,19 +44,19 @@ async def save_draft(payload: FIRDraftRequest, current_user: dict = Depends(get_
             "updated_at": datetime.now(timezone.utc).isoformat()
         }
     
-    ipfs_storage.save_user_drafts(current_user["email"], drafts)
+    await mongo_storage.save_user_drafts(current_user["email"], drafts)
     return {"draft_id": draft_id, "message": "Draft saved successfully"}
 
 @router.get("/my-drafts")
 async def get_my_drafts(current_user: dict = Depends(get_current_user)):
     """Get all saved drafts"""
-    drafts = ipfs_storage.get_user_drafts(current_user["email"])
+    drafts = await mongo_storage.get_user_drafts(current_user["email"])
     return list(drafts.values())
 
 @router.get("/{draft_id}")
 async def get_draft(draft_id: str, current_user: dict = Depends(get_current_user)):
     """Get a specific draft"""
-    drafts = ipfs_storage.get_user_drafts(current_user["email"])
+    drafts = await mongo_storage.get_user_drafts(current_user["email"])
     if draft_id not in drafts:
         raise HTTPException(status_code=404, detail="Draft not found")
     return drafts[draft_id]
@@ -64,8 +64,8 @@ async def get_draft(draft_id: str, current_user: dict = Depends(get_current_user
 @router.delete("/{draft_id}")
 async def delete_draft(draft_id: str, current_user: dict = Depends(get_current_user)):
     """Delete a draft"""
-    drafts = ipfs_storage.get_user_drafts(current_user["email"])
+    drafts = await mongo_storage.get_user_drafts(current_user["email"])
     if draft_id in drafts:
         del drafts[draft_id]
-        ipfs_storage.save_user_drafts(current_user["email"], drafts)
+        await mongo_storage.save_user_drafts(current_user["email"], drafts)
     return {"message": "Draft deleted"}

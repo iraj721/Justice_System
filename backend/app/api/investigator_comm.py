@@ -1,3 +1,4 @@
+# backend/app/api/investigator_comm.py
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from datetime import datetime, timezone
@@ -5,7 +6,7 @@ from typing import Optional, List
 import uuid
 from app.core.authz import require_roles
 from app.core.roles import UserRole
-from app.services.ipfs_storage import ipfs_storage
+from app.services.mongo_storage import mongo_storage
 from app.services.notification_service import notification_service
 
 router = APIRouter(prefix="/investigator/comm", tags=["Investigator Communication"])
@@ -23,14 +24,14 @@ class NoteRequest(BaseModel):
 @router.post("/send-message")
 async def send_message_to_complainant(payload: MessageRequest, current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
     """Send message to complainant with email and timeline"""
-    case = ipfs_storage.get_case(payload.case_id)
+    case = await mongo_storage.get_case(payload.case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
     if case.get("investigator_email") != current_user["email"]:
         raise HTTPException(status_code=403, detail="Not your case")
     
-    fir = ipfs_storage.get_fir(case.get("fir_id"))
+    fir = await mongo_storage.get_fir(case.get("fir_id"))
     if not fir:
         raise HTTPException(status_code=404, detail="FIR not found")
     
@@ -51,9 +52,9 @@ async def send_message_to_complainant(payload: MessageRequest, current_user: dic
     }
     
     # Save message
-    messages = ipfs_storage.get_case_messages(payload.case_id)
+    messages = await mongo_storage.get_case_messages(payload.case_id)
     messages[message_id] = message_data
-    ipfs_storage.save_case_messages(payload.case_id, messages)
+    await mongo_storage.save_case_messages(payload.case_id, messages)
     
     # ============ 1. SEND EMAIL TO COMPLAINANT ============
     email_body = f"""
@@ -83,7 +84,7 @@ async def send_message_to_complainant(payload: MessageRequest, current_user: dic
                 <p><strong>🕐 Time:</strong> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}</p>
                 <a href="http://localhost:5173/app" style="display: inline-block; background: #6366f1; color: white; padding: 10px 20px; text-decoration: none; border-radius: 8px; margin-top: 15px;">📱 View in Dashboard</a>
                 <hr style="border-color: #1e293b; margin: 20px 0;">
-                <p style="color: #64748b; font-size: 11px;">This is an automated notification from Decentralized Justice System.</p>
+                <p style="color: #64748b; font-size: 11px;">This is an automated notification from Justice System.</p>
             </div>
         </div>
     </body>
@@ -97,8 +98,8 @@ async def send_message_to_complainant(payload: MessageRequest, current_user: dic
     )
     
     # ============ 2. ADD TIMELINE EVENT TO CASE ============
-    # IMPORTANT: Get fresh case data again to ensure we have latest timeline
-    case = ipfs_storage.get_case(payload.case_id)
+    # Get fresh case data again to ensure we have latest timeline
+    case = await mongo_storage.get_case(payload.case_id)
     
     if "timeline" not in case:
         case["timeline"] = []
@@ -123,7 +124,7 @@ async def send_message_to_complainant(payload: MessageRequest, current_user: dic
     case["updated_at"] = datetime.now(timezone.utc).isoformat()
     
     # Save case with updated timeline
-    ipfs_storage.update_case(payload.case_id, case)
+    await mongo_storage.update_case(payload.case_id, case)
     
     print(f"✅ Timeline event added for case {payload.case_id}: {timeline_event['event']}")
     # ============ END TIMELINE ============
@@ -139,7 +140,7 @@ async def send_message_to_complainant(payload: MessageRequest, current_user: dic
 @router.post("/add-note")
 async def add_investigation_note(payload: NoteRequest, current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
     """Add internal investigation note with timeline"""
-    case = ipfs_storage.get_case(payload.case_id)
+    case = await mongo_storage.get_case(payload.case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
@@ -175,7 +176,7 @@ async def add_investigation_note(payload: NoteRequest, current_user: dict = Depe
     })
     
     case["updated_at"] = datetime.now(timezone.utc).isoformat()
-    ipfs_storage.update_case(payload.case_id, case)
+    await mongo_storage.update_case(payload.case_id, case)
     # ============ END TIMELINE ============
     
     return {"note": note, "message": "Note added"}
@@ -184,21 +185,21 @@ async def add_investigation_note(payload: NoteRequest, current_user: dict = Depe
 @router.get("/messages/{case_id}")
 async def get_case_messages(case_id: str, current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
     """Get all messages for a case"""
-    case = ipfs_storage.get_case(case_id)
+    case = await mongo_storage.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     
     if case.get("investigator_email") != current_user["email"]:
         raise HTTPException(status_code=403, detail="Not your case")
     
-    messages = ipfs_storage.get_case_messages(case_id)
+    messages = await mongo_storage.get_case_messages(case_id)
     return list(messages.values())
 
 
 @router.get("/notes/{case_id}")
 async def get_case_notes(case_id: str, current_user: dict = Depends(require_roles(UserRole.INVESTIGATOR))):
     """Get all investigation notes for a case"""
-    case = ipfs_storage.get_case(case_id)
+    case = await mongo_storage.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     

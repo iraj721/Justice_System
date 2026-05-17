@@ -6,8 +6,7 @@ from typing import Optional, List
 import uuid
 from app.core.authz import require_roles
 from app.core.roles import UserRole
-from app.services.ipfs_storage import ipfs_storage
-from app.services.custody_snapshots import append_custody_ipfs_snapshot_if_enabled
+from app.services.mongo_storage import mongo_storage
 
 router = APIRouter(prefix="/forensic/chain", tags=["Forensic Chain of Custody"])
 
@@ -24,7 +23,7 @@ class CustodyAccess(BaseModel):
 @router.post("/track-access")
 async def track_evidence_access(payload: CustodyAccess, current_user: dict = Depends(require_roles(UserRole.FORENSIC_ANALYST))):
     """Track when evidence is accessed"""
-    evidence = ipfs_storage.get_evidence(payload.evidence_id)
+    evidence = await mongo_storage.get_evidence(payload.evidence_id)
     if not evidence:
         raise HTTPException(status_code=404, detail="Evidence not found")
     
@@ -45,19 +44,19 @@ async def track_evidence_access(payload: CustodyAccess, current_user: dict = Dep
     evidence["custody_log"].append(access_record)
     evidence["last_accessed"] = datetime.now(timezone.utc).isoformat()
     evidence["last_accessed_by"] = current_user["email"]
-    evidence = await append_custody_ipfs_snapshot_if_enabled(payload.evidence_id, evidence)
-    ipfs_storage.save_evidence(payload.evidence_id, evidence)
+    
+    await mongo_storage.save_evidence(payload.evidence_id, evidence)
     
     return access_record
 
 @router.post("/transfer-custody")
 async def transfer_custody(payload: CustodyTransfer, current_user: dict = Depends(require_roles(UserRole.FORENSIC_ANALYST))):
     """Transfer evidence to another analyst"""
-    evidence = ipfs_storage.get_evidence(payload.evidence_id)
+    evidence = await mongo_storage.get_evidence(payload.evidence_id)
     if not evidence:
         raise HTTPException(status_code=404, detail="Evidence not found")
     
-    target_user = ipfs_storage.get_user(payload.to_analyst_email)
+    target_user = await mongo_storage.get_user(payload.to_analyst_email)
     if not target_user or target_user.get("role") != "FORENSIC_ANALYST":
         raise HTTPException(status_code=404, detail="Target analyst not found")
     
@@ -96,8 +95,8 @@ async def transfer_custody(payload: CustodyTransfer, current_user: dict = Depend
     evidence["current_custodian"] = payload.to_analyst_email
     evidence["current_custodian_name"] = target_user.get("full_name")
     evidence["last_transferred_at"] = datetime.now(timezone.utc).isoformat()
-    evidence = await append_custody_ipfs_snapshot_if_enabled(payload.evidence_id, evidence)
-    ipfs_storage.save_evidence(payload.evidence_id, evidence)
+    
+    await mongo_storage.save_evidence(payload.evidence_id, evidence)
     
     return transfer_record
 
@@ -107,7 +106,7 @@ async def transfer_in_custody(
     current_user: dict = Depends(require_roles(UserRole.FORENSIC_ANALYST))
 ):
     """Accept transferred evidence"""
-    evidence = ipfs_storage.get_evidence(evidence_id)
+    evidence = await mongo_storage.get_evidence(evidence_id)
     if not evidence:
         raise HTTPException(status_code=404, detail="Evidence not found")
     
@@ -129,15 +128,15 @@ async def transfer_in_custody(
     evidence["current_custodian"] = current_user["email"]
     evidence["current_custodian_name"] = current_user.get("full_name")
     evidence["last_transferred_in_at"] = datetime.now(timezone.utc).isoformat()
-    evidence = await append_custody_ipfs_snapshot_if_enabled(evidence_id, evidence)
-    ipfs_storage.save_evidence(evidence_id, evidence)
+    
+    await mongo_storage.save_evidence(evidence_id, evidence)
     
     return {"message": "Evidence received successfully", "evidence_id": evidence_id}
 
 @router.get("/custody-log/{evidence_id}")
 async def get_custody_log(evidence_id: str, current_user: dict = Depends(require_roles(UserRole.FORENSIC_ANALYST))):
     """Get complete chain of custody for evidence"""
-    evidence = ipfs_storage.get_evidence(evidence_id)
+    evidence = await mongo_storage.get_evidence(evidence_id)
     if not evidence:
         raise HTTPException(status_code=404, detail="Evidence not found")
     
@@ -148,7 +147,7 @@ async def get_custody_log(evidence_id: str, current_user: dict = Depends(require
         "type": "CREATION",
         "timestamp": evidence.get("created_at"),
         "by": evidence.get("created_by"),
-        "by_name": "System",
+        "by_name": evidence.get("created_by_name") or evidence.get("created_by", "System"),
         "details": "Evidence created and submitted to system"
     })
     
@@ -186,6 +185,7 @@ async def get_custody_log(evidence_id: str, current_user: dict = Depends(require
         "current_custodian_name": evidence.get("current_custodian_name", "Not assigned"),
         "created_at": evidence.get("created_at"),
         "created_by": evidence.get("created_by"),
+        "created_by_name": evidence.get("created_by_name"),
         "last_accessed": evidence.get("last_accessed"),
         "last_accessed_by": evidence.get("last_accessed_by"),
         "last_transferred_at": evidence.get("last_transferred_at"),
@@ -197,7 +197,7 @@ async def get_custody_log(evidence_id: str, current_user: dict = Depends(require
 @router.get("/forensic-evidence")
 async def get_forensic_evidence_list(current_user: dict = Depends(require_roles(UserRole.FORENSIC_ANALYST))):
     """Get all evidence available for forensic analyst"""
-    all_evidence = ipfs_storage.get_all_evidence()
+    all_evidence = await mongo_storage.get_all_evidence()
     
     evidence_list = []
     for evidence in all_evidence:
@@ -206,7 +206,7 @@ async def get_forensic_evidence_list(current_user: dict = Depends(require_roles(
             "case_id": evidence.get("case_id"),
             "title": evidence.get("title"),
             "description": evidence.get("description"),
-            "ipfs_cid": evidence.get("ipfs_cid"),
+            "cloudinary_url": evidence.get("cloudinary_url") or evidence.get("ipfs_cid"),
             "hash": evidence.get("hash"),
             "status": evidence.get("status"),
             "analysis_status": evidence.get("analysis_status", "PENDING"),
@@ -220,10 +220,102 @@ async def get_forensic_evidence_list(current_user: dict = Depends(require_roles(
 @router.get("/evidence-history/{evidence_id}")
 async def get_evidence_complete_history(
     evidence_id: str,
-    current_user: dict = Depends(require_roles(UserRole.FORENSIC_ANALYST, UserRole.INVESTIGATOR, UserRole.COURT))
-):
+    current_user: dict = Depends(require_roles(UserRole.FORENSIC_ANALYST, UserRole.INVESTIGATOR, UserRole.COURT)
+)):
     """Get complete history of an evidence"""
-    history = ipfs_storage.get_evidence_complete_history(evidence_id)
-    if not history:
+    # Get evidence first
+    evidence = await mongo_storage.get_evidence(evidence_id)
+    if not evidence:
         raise HTTPException(status_code=404, detail="Evidence not found")
-    return history
+    
+    # Build complete history
+    history = []
+    
+    # 1. Creation
+    history.append({
+        "type": "CREATION",
+        "timestamp": evidence.get("created_at"),
+        "action": "Evidence Uploaded",
+        "description": f"Evidence '{evidence.get('title')}' was created",
+        "by": evidence.get("created_by"),
+        "by_name": evidence.get("created_by_name"),
+        "details": {
+            "title": evidence.get("title"),
+            "description": evidence.get("description"),
+            "hash": evidence.get("hash")
+        }
+    })
+    
+    # 2. Access logs
+    for log in evidence.get("custody_log", []):
+        history.append({
+            "type": "ACCESS",
+            "timestamp": log.get("timestamp"),
+            "action": log.get("action", "ACCESSED"),
+            "description": log.get("notes", f"Evidence accessed by {log.get('accessed_by_name')}"),
+            "by": log.get("accessed_by"),
+            "by_name": log.get("accessed_by_name"),
+            "details": log
+        })
+    
+    # 3. Transfers
+    for transfer in evidence.get("custody_transfers", []):
+        history.append({
+            "type": "TRANSFER",
+            "timestamp": transfer.get("transferred_at"),
+            "action": "TRANSFERRED",
+            "description": f"Evidence transferred from {transfer.get('transferred_from_name')} to {transfer.get('transferred_to_name')}",
+            "from": transfer.get("transferred_from"),
+            "from_name": transfer.get("transferred_from_name"),
+            "to": transfer.get("transferred_to"),
+            "to_name": transfer.get("transferred_to_name"),
+            "details": transfer
+        })
+    
+    # 4. Verifications
+    for verify in evidence.get("verifications", []):
+        history.append({
+            "type": "VERIFICATION",
+            "timestamp": verify.get("verified_at"),
+            "action": "VERIFIED" if verify.get("result") else "VERIFICATION_FAILED",
+            "description": f"Evidence verification {'passed' if verify.get('result') else 'failed'}",
+            "by": verify.get("verified_by"),
+            "by_name": verify.get("verified_by_name"),
+            "details": verify
+        })
+    
+    # 5. Analysis
+    if evidence.get("analysis_status") == "COMPLETED":
+        history.append({
+            "type": "ANALYSIS",
+            "timestamp": evidence.get("analysis_completed_at"),
+            "action": "ANALYSIS_COMPLETED",
+            "description": f"Forensic analysis completed by {evidence.get('analyzed_by_name')}",
+            "by": evidence.get("analyzed_by"),
+            "by_name": evidence.get("analyzed_by_name"),
+            "details": {
+                "analysis_status": evidence.get("analysis_status"),
+                "analysis_id": evidence.get("analysis_id")
+            }
+        })
+    
+    # Sort by timestamp
+    history.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+    
+    return {
+        "evidence_id": evidence_id,
+        "evidence_title": evidence.get("title"),
+        "evidence_description": evidence.get("description"),
+        "current_status": evidence.get("status"),
+        "current_analysis_status": evidence.get("analysis_status", "PENDING"),
+        "current_custodian": evidence.get("current_custodian"),
+        "current_custodian_name": evidence.get("current_custodian_name"),
+        "created_at": evidence.get("created_at"),
+        "created_by": evidence.get("created_by"),
+        "created_by_name": evidence.get("created_by_name"),
+        "history": history,
+        "verification_count": len(evidence.get("verifications", [])),
+        "view_count": len([l for l in evidence.get("custody_log", []) if l.get("action") == "VIEW"]),
+        "transfer_count": len(evidence.get("custody_transfers", [])),
+        "last_verified_at": evidence.get("verifications", [])[-1].get("verified_at") if evidence.get("verifications") else None
+    }

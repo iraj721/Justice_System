@@ -269,6 +269,55 @@ button {
   background: #dc2626;
 }
 
+.error-boundary {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 2rem;
+  background: linear-gradient(135deg, #0c0f1a, #07090e);
+  color: #e8ecf8;
+}
+
+.error-boundary-icon {
+  font-size: 4rem;
+  margin-bottom: 1rem;
+}
+
+.error-boundary h2 {
+  font-size: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.error-boundary p {
+  color: #7a849c;
+  margin-bottom: 1.5rem;
+}
+
+.error-boundary-actions {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.error-details {
+  margin-top: 2rem;
+  text-align: left;
+  width: 100%;
+  max-width: 600px;
+  background: rgba(0,0,0,0.3);
+  padding: 1rem;
+  border-radius: 8px;
+}
+
+.error-details pre {
+  font-size: 0.7rem;
+  overflow-x: auto;
+  color: #7a849c;
+}
+
 @media (max-width: 820px) {
   .dashboard-header {
     align-items: stretch;

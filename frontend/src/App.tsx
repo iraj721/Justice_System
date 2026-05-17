@@ -8,14 +8,10 @@ import {
   ForgotPasswordPage,
   DashboardPage,
   TermsPage,
-  PrivacyPage,
-  BlockchainViewer
+  PrivacyPage
 } from "./pages";
-import { getToken } from "./shared/services/auth";
 
 export function App() {
-  const token = getToken();
-
   return (
     <>
       <TopNav />
@@ -28,8 +24,6 @@ export function App() {
         <Route path="/privacy" element={<PrivacyPage />} />
         
         <Route path="/app" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
-        
-        <Route path="/blockchain" element={<ProtectedRoute><BlockchainViewer token={token!} /></ProtectedRoute>} />
         
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

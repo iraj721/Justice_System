@@ -8,7 +8,6 @@ const NAV_ITEMS = [
   { to: "/login", label: "Login", icon: "🔐" },
   { to: "/register", label: "Register", icon: "📝" },
   { to: "/app", label: "Dashboard", icon: "📊" },
-  { to: "/blockchain", label: "Explorer", icon: "🔗" },
 ];
 
 export function TopNav() {
