@@ -12,13 +12,11 @@ const ROLE_OPTIONS: UserRole[] = [
 ];
 
 // API URL
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
 export function RegisterPage() {
   const navigate = useNavigate();
-  const [step, setStep] = useState<"form" | "otp">("form");
-  const [otp, setOtp] = useState("");
-  const [registerEmail, setRegisterEmail] = useState("");
   const [form, setForm] = useState({
     fullName: "",
     email: "",
@@ -31,7 +29,9 @@ export function RegisterPage() {
     district: "",
   });
   const [isLoading, setIsLoading] = useState(false);
-  const [toast, setToast] = useState<{ message: string; type: string } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: string } | null>(
+    null,
+  );
   const [showPassword, setShowPassword] = useState(false);
   const [focused, setFocused] = useState("");
   const [agreeToTerms, setAgreeToTerms] = useState(false);
@@ -65,27 +65,41 @@ export function RegisterPage() {
 
   const getRoleIcon = (role: UserRole) => {
     switch (role) {
-      case "PUBLIC_USER": return "👥";
-      case "INVESTIGATOR": return "👮";
-      case "FORENSIC_ANALYST": return "🔬";
-      case "COURT": return "⚖️";
-      case "ADMIN": return "⚙️";
-      default: return "👤";
+      case "PUBLIC_USER":
+        return "👥";
+      case "INVESTIGATOR":
+        return "👮";
+      case "FORENSIC_ANALYST":
+        return "🔬";
+      case "COURT":
+        return "⚖️";
+      case "ADMIN":
+        return "⚙️";
+      default:
+        return "👤";
     }
   };
 
   const getRoleDescription = (role: UserRole) => {
     switch (role) {
-      case "PUBLIC_USER": return "File complaints, track cases, and upload evidence securely";
-      case "INVESTIGATOR": return "Manage investigations, gather evidence, and coordinate with forensic labs";
-      case "FORENSIC_ANALYST": return "Analyze evidence, generate secure reports with digital signatures";
-      case "COURT": return "Review cases, conduct virtual hearings, and deliver judgments";
-      case "ADMIN": return "System administration and user management";
-      default: return "Select your role in the justice system";
+      case "PUBLIC_USER":
+        return "File complaints, track cases, and upload evidence securely";
+      case "INVESTIGATOR":
+        return "Manage investigations, gather evidence, and coordinate with forensic labs";
+      case "FORENSIC_ANALYST":
+        return "Analyze evidence, generate secure reports with digital signatures";
+      case "COURT":
+        return "Review cases, conduct virtual hearings, and deliver judgments";
+      case "ADMIN":
+        return "System administration and user management";
+      default:
+        return "Select your role in the justice system";
     }
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>,
+  ) => {
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
@@ -96,7 +110,8 @@ export function RegisterPage() {
     if (!/[A-Z]/.test(password)) errors.push("One uppercase letter (A-Z)");
     if (!/[a-z]/.test(password)) errors.push("One lowercase letter (a-z)");
     if (!/\d/.test(password)) errors.push("One number (0-9)");
-    if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) errors.push("One special character (!@#$%^&*)");
+    if (!/[!@#$%^&*(),.?":{}|<>]/.test(password))
+      errors.push("One special character (!@#$%^&*)");
     return errors;
   };
 
@@ -116,13 +131,16 @@ export function RegisterPage() {
     // Validate password
     const passwordErrorsList = validatePassword(form.password);
     if (passwordErrorsList.length > 0) {
-      showToast(`Password requirements: ${passwordErrorsList.join(", ")}`, "error");
+      showToast(
+        `Password requirements: ${passwordErrorsList.join(", ")}`,
+        "error",
+      );
       return;
     }
 
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/send-otp`, {
+      const response = await fetch(`${API_BASE_URL}/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -136,75 +154,28 @@ export function RegisterPage() {
 
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.detail || "Failed to send verification code");
-      }
-
-      setRegisterEmail(form.email);
-      setStep("otp");
-      showToast("Verification code sent to your email!", "success");
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Registration failed";
-      showToast(errorMessage, "error");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleVerifyOTP = async () => {
-    if (!otp) {
-      showToast("Please enter verification code", "error");
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/verify-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: registerEmail,
-          otp: otp,
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || "Invalid verification code");
+        throw new Error(error.detail || "Registration failed");
       }
 
       const data = await response.json();
-      
+
       // Save session data
       localStorage.setItem("justice_token", data.access_token);
       localStorage.setItem("justice_role", data.role);
-      localStorage.setItem("justice_user", JSON.stringify({ full_name: data.full_name, email: data.email }));
-      
+      localStorage.setItem(
+        "justice_user",
+        JSON.stringify({
+          full_name: data.full_name,
+          email: data.email,
+        }),
+      );
+
       showToast("Registration successful! Redirecting...", "success");
       setTimeout(() => navigate("/app"), 600);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Verification failed";
+      const errorMessage =
+        err instanceof Error ? err.message : "Registration failed";
       showToast(errorMessage, "error");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleResendOTP = async () => {
-    setIsLoading(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/resend-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: registerEmail }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to resend code");
-      }
-
-      showToast("New verification code sent!", "success");
-    } catch (err) {
-      showToast("Failed to resend code", "error");
     } finally {
       setIsLoading(false);
     }
@@ -241,14 +212,26 @@ export function RegisterPage() {
           <span className="register-logo-text">Decentralized Justice</span>
         </Link>
         <div className="register-nav-links">
-          <Link to="/" className="register-nav-link">Home</Link>
-          <Link to="/login" className="register-nav-link">Login</Link>
-          <Link to="/register" className="register-nav-link active">Register</Link>
-          <Link to="/dashboard" className="register-nav-link">Dashboard</Link>
-          <Link to="/explorer" className="register-nav-link">Explorer</Link>
+          <Link to="/" className="register-nav-link">
+            Home
+          </Link>
+          <Link to="/login" className="register-nav-link">
+            Login
+          </Link>
+          <Link to="/register" className="register-nav-link active">
+            Register
+          </Link>
+          <Link to="/dashboard" className="register-nav-link">
+            Dashboard
+          </Link>
+          <Link to="/explorer" className="register-nav-link">
+            Explorer
+          </Link>
         </div>
         <div className="register-nav-actions">
-          <Link to="/login" className="register-nav-btn">Sign In</Link>
+          <Link to="/login" className="register-nav-btn">
+            Sign In
+          </Link>
         </div>
       </nav>
 
@@ -256,7 +239,11 @@ export function RegisterPage() {
       {toast && (
         <div className={`register-toast register-toast-${toast.type}`}>
           <span className="register-toast-icon">
-            {toast.type === "success" ? "✓" : toast.type === "warning" ? "⚠" : "✕"}
+            {toast.type === "success"
+              ? "✓"
+              : toast.type === "warning"
+                ? "⚠"
+                : "✕"}
           </span>
           <span>{toast.message}</span>
         </div>
@@ -268,26 +255,46 @@ export function RegisterPage() {
         <div className="register-left">
           <div className="register-card">
             <div className="register-card-inner">
-              {step === "form" ? (
-                <>
-                  <div className="register-badge">Get Started</div>
-                  <h1 className="register-title">
-                    Create your
-                    <br />
-                    <span className="register-title-highlight">Justice Account</span>
-                  </h1>
-                  <p className="register-subtitle">
-                    Join Pakistan's first blockchain-powered justice ecosystem.
-                  </p>
+              {/* Registration Form - No OTP */}
+              <div className="register-badge">Get Started</div>
+              <h1 className="register-title">
+                Create your
+                <br />
+                <span className="register-title-highlight">
+                  Justice Account
+                </span>
+              </h1>
+              <p className="register-subtitle">
+                Join Pakistan's first blockchain-powered justice ecosystem.
+              </p>
 
-                  <form className="register-form" onSubmit={handleSubmit}>
-                    {/* Full Name */}
-                    <div className={`register-field ${focused === "fullName" ? "focused" : ""}`}>
-                      <label className="register-label">Full name *</label>
-                      <div className="register-input-group">
-                        <svg className="register-input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none">
-                          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                          <circle cx="12" cy="7" r="4" stroke="currentColor" strokeWidth="1.5"/>
+              <form className="register-form" onSubmit={handleSubmit}>
+                {/* Full Name */}
+                <div
+                  className={`register-field ${focused === "fullName" ? "focused" : ""}`}
+                >
+                  <label className="register-label">Full name *</label>
+                  <div className="register-input-group">
+                    <svg
+                      className="register-input-icon"
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                    >
+                      <path
+                        d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                      />
+                      <circle
+                        cx="12"
+                        cy="7"
+                        r="4"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                      />
                         </svg>
                         <input
                           name="fullName"
@@ -302,12 +309,29 @@ export function RegisterPage() {
                     </div>
 
                     {/* Email */}
-                    <div className={`register-field ${focused === "email" ? "focused" : ""}`}>
+                    <div
+                      className={`register-field ${focused === "email" ? "focused" : ""}`}
+                    >
                       <label className="register-label">Email address *</label>
                       <div className="register-input-group">
-                        <svg className="register-input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none">
-                          <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" stroke="currentColor" strokeWidth="1.5"/>
-                          <path d="M22 6l-10 7L2 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                        <svg
+                          className="register-input-icon"
+                          width="18"
+                          height="18"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                        >
+                          <path
+                            d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                          />
+                          <path
+                            d="M22 6l-10 7L2 6"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                          />
                         </svg>
                         <input
                           name="email"
@@ -323,12 +347,30 @@ export function RegisterPage() {
                     </div>
 
                     {/* Role Selection */}
-                    <div className={`register-field ${focused === "role" ? "focused" : ""}`}>
-                      <label className="register-label">Select your role *</label>
+                    <div
+                      className={`register-field ${focused === "role" ? "focused" : ""}`}
+                    >
+                      <label className="register-label">
+                        Select your role *
+                      </label>
                       <div className="register-select-wrapper">
-                        <svg className="register-select-icon" width="18" height="18" viewBox="0 0 24 24" fill="none">
-                          <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4z" stroke="currentColor" strokeWidth="1.5"/>
-                          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" stroke="currentColor" strokeWidth="1.5"/>
+                        <svg
+                          className="register-select-icon"
+                          width="18"
+                          height="18"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                        >
+                          <path
+                            d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4z"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                          />
+                          <path
+                            d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                          />
                         </svg>
                         <select
                           name="role"
@@ -346,21 +388,51 @@ export function RegisterPage() {
                           ))}
                         </select>
                         <div className="register-select-arrow">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                          >
                             <polyline points="6 9 12 15 18 9" />
                           </svg>
                         </div>
                       </div>
-                      <div className="register-role-hint">{getRoleDescription(form.role)}</div>
+                      <div className="register-role-hint">
+                        {getRoleDescription(form.role)}
+                      </div>
                     </div>
 
                     {/* Password */}
-                    <div className={`register-field ${focused === "password" ? "focused" : ""}`}>
+                    <div
+                      className={`register-field ${focused === "password" ? "focused" : ""}`}
+                    >
                       <label className="register-label">Password *</label>
                       <div className="register-input-group">
-                        <svg className="register-input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none">
-                          <rect x="5" y="11" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.5"/>
-                          <path d="M8 11V8c0-2.21 1.79-4 4-4s4 1.79 4 4v3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                        <svg
+                          className="register-input-icon"
+                          width="18"
+                          height="18"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                        >
+                          <rect
+                            x="5"
+                            y="11"
+                            width="14"
+                            height="10"
+                            rx="2"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                          />
+                          <path
+                            d="M8 11V8c0-2.21 1.79-4 4-4s4 1.79 4 4v3"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                          />
                         </svg>
                         <input
                           type={showPassword ? "text" : "password"}
@@ -372,15 +444,44 @@ export function RegisterPage() {
                           placeholder="Choose a strong password"
                           disabled={isLoading}
                         />
-                        <button type="button" className="register-eye" onClick={() => setShowPassword(!showPassword)}>
+                        <button
+                          type="button"
+                          className="register-eye"
+                          onClick={() => setShowPassword(!showPassword)}
+                        >
                           {showPassword ? (
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                              <path d="M2 2L22 22M6.5 6.6C4.5 8.1 3 10 2 12c1.3 3 4 5 7 5 1.3 0 2.5-.4 3.5-1M9.5 9.5C8.5 10.5 8 12 8 12c0 1.1.9 2 2 2 1 0 2.5-.5 3.5-1.5M17.5 6.5C19 8 20 10 21 12c-1.5 3.5-5 6-9 6-1 0-2-.2-3-.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                            <svg
+                              width="18"
+                              height="18"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                            >
+                              <path
+                                d="M2 2L22 22M6.5 6.6C4.5 8.1 3 10 2 12c1.3 3 4 5 7 5 1.3 0 2.5-.4 3.5-1M9.5 9.5C8.5 10.5 8 12 8 12c0 1.1.9 2 2 2 1 0 2.5-.5 3.5-1.5M17.5 6.5C19 8 20 10 21 12c-1.5 3.5-5 6-9 6-1 0-2-.2-3-.5"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                                strokeLinecap="round"
+                              />
                             </svg>
                           ) : (
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                              <path d="M2 12c1.3-3 4-5 7-5s5.7 2 7 5c-1.3 3-4 5-7 5s-5.7-2-7-5z" stroke="currentColor" strokeWidth="1.5"/>
-                              <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.5"/>
+                            <svg
+                              width="18"
+                              height="18"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                            >
+                              <path
+                                d="M2 12c1.3-3 4-5 7-5s5.7 2 7 5c-1.3 3-4 5-7 5s-5.7-2-7-5z"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                              />
+                              <circle
+                                cx="12"
+                                cy="12"
+                                r="3"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                              />
                             </svg>
                           )}
                         </button>
@@ -388,15 +489,31 @@ export function RegisterPage() {
                       {showPasswordStrength && (
                         <div className="register-strength">
                           <div className="register-strength-bars">
-                            <div className={`register-strength-bar ${passwordStrength >= 1 ? "active" : ""}`} />
-                            <div className={`register-strength-bar ${passwordStrength >= 2 ? "active" : ""}`} />
-                            <div className={`register-strength-bar ${passwordStrength >= 3 ? "active" : ""}`} />
-                            <div className={`register-strength-bar ${passwordStrength >= 4 ? "active" : ""}`} />
-                            <div className={`register-strength-bar ${passwordStrength >= 5 ? "active" : ""}`} />
+                            <div
+                              className={`register-strength-bar ${passwordStrength >= 1 ? "active" : ""}`}
+                            />
+                            <div
+                              className={`register-strength-bar ${passwordStrength >= 2 ? "active" : ""}`}
+                            />
+                            <div
+                              className={`register-strength-bar ${passwordStrength >= 3 ? "active" : ""}`}
+                            />
+                            <div
+                              className={`register-strength-bar ${passwordStrength >= 4 ? "active" : ""}`}
+                            />
+                            <div
+                              className={`register-strength-bar ${passwordStrength >= 5 ? "active" : ""}`}
+                            />
                           </div>
-                          <span className={passwordStrength >= 5 ? "register-strength-valid" : ""}>
-                            {passwordStrength >= 5 
-                              ? "✓ Strong password" 
+                          <span
+                            className={
+                              passwordStrength >= 5
+                                ? "register-strength-valid"
+                                : ""
+                            }
+                          >
+                            {passwordStrength >= 5
+                              ? "✓ Strong password"
                               : `Weak password: Need ${5 - passwordStrength} more requirement(s)`}
                           </span>
                         </div>
@@ -405,12 +522,35 @@ export function RegisterPage() {
 
                     {/* Onboarding Code for Restricted Roles */}
                     {needsOnboarding && (
-                      <div className={`register-field ${focused === "onboardingCode" ? "focused" : ""}`}>
-                        <label className="register-label">Verification Code *</label>
+                      <div
+                        className={`register-field ${focused === "onboardingCode" ? "focused" : ""}`}
+                      >
+                        <label className="register-label">
+                          Verification Code *
+                        </label>
                         <div className="register-input-group">
-                          <svg className="register-input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none">
-                            <rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" strokeWidth="1.5"/>
-                            <path d="M7 9h10M7 13h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                          <svg
+                            className="register-input-icon"
+                            width="18"
+                            height="18"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                          >
+                            <rect
+                              x="3"
+                              y="5"
+                              width="18"
+                              height="14"
+                              rx="2"
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                            />
+                            <path
+                              d="M7 9h10M7 13h6"
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                              strokeLinecap="round"
+                            />
                           </svg>
                           <input
                             name="onboardingCode"
@@ -422,16 +562,30 @@ export function RegisterPage() {
                             disabled={isLoading}
                           />
                         </div>
-                        <div className="register-code-hint">⚠️ Restricted role requires valid verification code</div>
+                        <div className="register-code-hint">
+                          ⚠️ Restricted role requires valid verification code
+                        </div>
                       </div>
                     )}
 
                     {/* Phone Number */}
-                    <div className={`register-field ${focused === "phoneNumber" ? "focused" : ""}`}>
+                    <div
+                      className={`register-field ${focused === "phoneNumber" ? "focused" : ""}`}
+                    >
                       <label className="register-label">Phone number</label>
                       <div className="register-input-group">
-                        <svg className="register-input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none">
-                          <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.362 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.338 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" stroke="currentColor" strokeWidth="1.5"/>
+                        <svg
+                          className="register-input-icon"
+                          width="18"
+                          height="18"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                        >
+                          <path
+                            d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.362 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.338 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                          />
                         </svg>
                         <input
                           name="phoneNumber"
@@ -447,7 +601,9 @@ export function RegisterPage() {
 
                     {/* Location Fields */}
                     <div className="register-row">
-                      <div className={`register-field ${focused === "city" ? "focused" : ""}`}>
+                      <div
+                        className={`register-field ${focused === "city" ? "focused" : ""}`}
+                      >
                         <label className="register-label">City</label>
                         <input
                           name="city"
@@ -460,7 +616,9 @@ export function RegisterPage() {
                           className="register-input-full"
                         />
                       </div>
-                      <div className={`register-field ${focused === "district" ? "focused" : ""}`}>
+                      <div
+                        className={`register-field ${focused === "district" ? "focused" : ""}`}
+                      >
                         <label className="register-label">District</label>
                         <input
                           name="district"
@@ -476,12 +634,30 @@ export function RegisterPage() {
                     </div>
 
                     {/* Address */}
-                    <div className={`register-field ${focused === "address" ? "focused" : ""}`}>
+                    <div
+                      className={`register-field ${focused === "address" ? "focused" : ""}`}
+                    >
                       <label className="register-label">Address</label>
                       <div className="register-input-group">
-                        <svg className="register-input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none">
-                          <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" stroke="currentColor" strokeWidth="1.5"/>
-                          <circle cx="12" cy="9" r="3" stroke="currentColor" strokeWidth="1.5"/>
+                        <svg
+                          className="register-input-icon"
+                          width="18"
+                          height="18"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                        >
+                          <path
+                            d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                          />
+                          <circle
+                            cx="12"
+                            cy="9"
+                            r="3"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                          />
                         </svg>
                         <input
                           name="address"
@@ -497,24 +673,44 @@ export function RegisterPage() {
 
                     {/* Terms Checkbox */}
                     <label className="register-checkbox">
-                      <input type="checkbox" checked={agreeToTerms} onChange={(e) => setAgreeToTerms(e.target.checked)} />
+                      <input
+                        type="checkbox"
+                        checked={agreeToTerms}
+                        onChange={(e) => setAgreeToTerms(e.target.checked)}
+                      />
                       <span>
-                        I agree to the <Link to="/terms">Terms of Service</Link> and <Link to="/privacy">Privacy Policy</Link>
+                        I agree to the <Link to="/terms">Terms of Service</Link>{" "}
+                        and <Link to="/privacy">Privacy Policy</Link>
                       </span>
                     </label>
 
                     {/* Submit Button */}
-                    <button type="submit" className="register-submit" disabled={isLoading}>
+                    <button
+                      type="submit"
+                      className="register-submit"
+                      disabled={isLoading}
+                    >
                       {isLoading ? (
                         <>
                           <span className="register-spinner" />
-                          Sending verification code...
+                          Creating Account...
                         </>
                       ) : (
                         <>
                           Create Account
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M5 12h14M12 5l7 7-7 7" strokeLinecap="round" strokeLinejoin="round"/>
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                          >
+                            <path
+                              d="M5 12h14M12 5l7 7-7 7"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
                           </svg>
                         </>
                       )}
@@ -524,135 +720,72 @@ export function RegisterPage() {
                   <div className="register-footer">
                     <p>
                       Already have an account?{" "}
-                      <Link to="/login" className="register-footer-link">Sign in instead</Link>
+                      <Link to="/login" className="register-footer-link">
+                        Sign in instead
+                      </Link>
                     </p>
                   </div>
-                </>
-              ) : (
-                // ============ OTP VERIFICATION STEP ============
-                <>
-                  <div className="register-badge">Email Verification</div>
-                  <h1 className="register-title">
-                    Verify Your
-                    <br />
-                    <span className="register-title-highlight">Email Address</span>
-                  </h1>
-                  <p className="register-subtitle">We've sent a 6-digit verification code to</p>
-                  <p className="register-email-display"><strong>{registerEmail}</strong></p>
+                </div>
+              </div>
+            </div>
 
-                  <div className="register-form">
-                    <div className={`register-field ${focused === "otp" ? "focused" : ""}`}>
-                      <label className="register-label">Verification Code</label>
-                      <div className="register-input-group">
-                        <svg className="register-input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none">
-                          <rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" strokeWidth="1.5"/>
-                          <path d="M7 9h10M7 13h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                        </svg>
-                        <input
-                          type="text"
-                          maxLength={6}
-                          value={otp}
-                          onChange={(e) => setOtp(e.target.value)}
-                          onFocus={() => setFocused("otp")}
-                          onBlur={() => setFocused("")}
-                          placeholder="Enter 6-digit code"
-                          disabled={isLoading}
-                          style={{ letterSpacing: "4px", fontSize: "1.1rem" }}
-                        />
-                      </div>
-                    </div>
+            {/* Right Column - Feature Panel (Aligned to top) */}
+            <div className="register-right">
+              <div className="register-feature">
+                <div className="register-feature-badge">POWERED BY BLOCKCHAIN</div>
+                <h2 className="register-feature-title">
+                  Join the future of
+                  <br />
+                  <span className="register-feature-highlight">Justice System</span>
+                </h2>
+                <p className="register-feature-text">
+                  Blockchain-verified records, transparent case tracking, and secure
+                  digital signatures — all in one unified platform.
+                </p>
 
-                    <button
-                      type="button"
-                      className="register-submit"
-                      onClick={handleVerifyOTP}
-                      disabled={isLoading || !otp}
-                    >
-                      {isLoading ? (
-                        <>
-                          <span className="register-spinner" />
-                          Verifying...
-                        </>
-                      ) : (
-                        <>
-                          Verify & Complete Registration
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M5 12h14M12 5l7 7-7 7" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
-                        </>
-                      )}
-                    </button>
-
-                    <div className="register-otp-footer">
-                      <p>
-                        Didn't receive the code?{" "}
-                        <button type="button" className="register-resend-btn" onClick={handleResendOTP} disabled={isLoading}>
-                          Resend Code
-                        </button>
-                      </p>
-                      <p className="register-otp-hint">Check your spam folder if you don't see the email in a few minutes.</p>
-                    </div>
+                <div className="register-feature-stats">
+                  <div className="register-stat">
+                    <div className="register-stat-value">100%</div>
+                    <div className="register-stat-label">Transparent</div>
                   </div>
-
-                  <div className="register-footer">
-                    <button type="button" className="register-back-btn" onClick={() => setStep("form")}>
-                      ← Back to Registration
-                    </button>
+                  <div className="register-stat">
+                    <div className="register-stat-value">24/7</div>
+                    <div className="register-stat-label">Accessible</div>
                   </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
+                  <div className="register-stat">
+                    <div className="register-stat-value">256-bit</div>
+                    <div className="register-stat-label">Encrypted</div>
+                  </div>
+                  <div className="register-stat">
+                    <div className="register-stat-value">10x</div>
+                    <div className="register-stat-label">Faster</div>
+                  </div>
+                </div>
 
-        {/* Right Column - Feature Panel (Aligned to top) */}
-        <div className="register-right">
-          <div className="register-feature">
-            <div className="register-feature-badge">POWERED BY BLOCKCHAIN</div>
-            <h2 className="register-feature-title">
-              Join the future of
-              <br />
-              <span className="register-feature-highlight">Justice System</span>
-            </h2>
-            <p className="register-feature-text">
-              Blockchain-verified records, transparent case tracking, and secure
-              digital signatures — all in one unified platform.
-            </p>
-
-            <div className="register-feature-stats">
-              <div className="register-stat">
-                <div className="register-stat-value">100%</div>
-                <div className="register-stat-label">Transparent</div>
-              </div>
-              <div className="register-stat">
-                <div className="register-stat-value">24/7</div>
-                <div className="register-stat-label">Accessible</div>
-              </div>
-              <div className="register-stat">
-                <div className="register-stat-value">256-bit</div>
-                <div className="register-stat-label">Encrypted</div>
-              </div>
-              <div className="register-stat">
-                <div className="register-stat-value">10x</div>
-                <div className="register-stat-label">Faster</div>
+                <div className="register-feature-quote">
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M10 11H6c-1.1 0-2 .9-2 2v4c0 1.1.9 2 2 2h4c1.1 0 2-.9 2-2v-4c0-1.1-.9-2-2-2zM10 11V7c0-1.1.9-2 2-2h2M20 11h-4c-1.1 0-2 .9-2 2v4c0 1.1.9 2 2 2h4c1.1 0 2-.9 2-2v-4c0-1.1-.9-2-2-2zM20 11V7c0-1.1.9-2 2-2h2"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  <p>
+                    "The most secure and transparent justice platform we've
+                    implemented. Blockchain integration ensures complete trust in
+                    the system."
+                  </p>
+                  <div className="register-feature-author">
+                    <strong>— National Legal Commission</strong>
+                    <span>Digital Justice Initiative</span>
+                  </div>
+                </div>
               </div>
             </div>
+          </main>
 
-            <div className="register-feature-quote">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-                <path d="M10 11H6c-1.1 0-2 .9-2 2v4c0 1.1.9 2 2 2h4c1.1 0 2-.9 2-2v-4c0-1.1-.9-2-2-2zM10 11V7c0-1.1.9-2 2-2h2M20 11h-4c-1.1 0-2 .9-2 2v4c0 1.1.9 2 2 2h4c1.1 0 2-.9 2-2v-4c0-1.1-.9-2-2-2zM20 11V7c0-1.1.9-2 2-2h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-              </svg>
-              <p>"The most secure and transparent justice platform we've implemented. Blockchain integration ensures complete trust in the system."</p>
-              <div className="register-feature-author">
-                <strong>— National Legal Commission</strong>
-                <span>Digital Justice Initiative</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </main>
-
-      <style>{`
+          <style>{`
         /* Reset & Base - Indigo Theme */
         .register-page {
           --bg-deep: #06080f;
@@ -1369,67 +1502,6 @@ export function RegisterPage() {
         .register-feature-author span {
           font-size: 0.68rem;
           color: #3d4459;
-        }
-
-        /* OTP Step Styles */
-        .register-email-display {
-          text-align: center;
-          margin: -10px 0 20px 0;
-          color: #818cf8;
-          font-size: 0.9rem;
-          background: rgba(99, 102, 241, 0.1);
-          padding: 8px;
-          border-radius: 8px;
-        }
-
-        .register-otp-footer {
-          text-align: center;
-          margin-top: 20px;
-        }
-
-        .register-resend-btn {
-          background: none;
-          border: none;
-          color: #818cf8;
-          cursor: pointer;
-          font-weight: 600;
-          text-decoration: underline;
-        }
-
-        .register-resend-btn:hover {
-          color: #a5b4fc;
-        }
-
-        .register-resend-btn:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-
-        .register-otp-hint {
-          font-size: 0.7rem;
-          color: #3d4459;
-          margin-top: 12px;
-        }
-
-        .register-back-btn {
-          background: none;
-          border: none;
-          color: #7a849c;
-          cursor: pointer;
-          font-size: 0.8rem;
-          transition: color 0.2s;
-        }
-
-        .register-back-btn:hover {
-          color: #818cf8;
-        }
-
-        /* OTP Input styling */
-        .register-input-group input[type="text"][maxLength="6"] {
-          text-align: center;
-          font-size: 1.2rem;
-          letter-spacing: 8px;
-          font-family: monospace;
         }
 
         /* Responsive */
