@@ -19,14 +19,14 @@ export function HomePage() {
   const observerRef = useRef<IntersectionObserver | null>(null);
 
   useEffect(() => {
-    document.title = "Decentralized Justice System | Blockchain Legal Platform";
+    document.title = "Justice System";
     let meta = document.querySelector('meta[name="description"]');
     if (!meta) {
       meta = document.createElement("meta");
       meta.setAttribute("name", "description");
       document.head.appendChild(meta);
     }
-    meta.setAttribute("content", "Modern justice ecosystem powered by blockchain technology for citizens, police, forensic labs, and courts.");
+    meta.setAttribute("content", "Modern justice ecosystem for citizens, police, forensic labs, and courts.");
   }, []);
 
   useEffect(() => {
@@ -102,10 +102,10 @@ export function HomePage() {
   };
 
   const statsData = [
-    { value: "24/7", label: "ACCESS", icon: "🕒" },
-    { value: "100%", label: "TRACEABLE", icon: "📊" },
-    { value: "CLOUD", label: "STORAGE", icon: "💾" },
-    { value: "5+", label: "ROLES", icon: "👥" },
+    { value: "24/7", label: "ACCESS" },
+    { value: "100%", label: "TRACEABLE" },
+    { value: "CLOUD", label: "STORAGE"},
+    { value: "5+", label: "ROLES" },
   ];
 
   const stepsData = [
@@ -124,7 +124,7 @@ export function HomePage() {
       <nav className="dj-nav">
         <div className="dj-nav-brand">
           <div className="dj-nav-brand-mark">⚖</div>
-          Decentralized Justice
+          Justice System
         </div>
         <div className="dj-nav-links">
           <Link to="#" className="active">Home</Link>
@@ -148,7 +148,7 @@ export function HomePage() {
         <div className="dj-hero-inner">
           <div className="dj-hero-tag">
             <div className="dj-hero-tag-dot"></div>
-            BLOCKCHAIN SECURED · TRANSPARENT · TRUSTED
+             SECURED · TRANSPARENT · TRUSTED
           </div>
           <h1 className="dj-h1">
             Modern Justice
@@ -163,10 +163,6 @@ export function HomePage() {
               <span className="btn-text">Begin Case</span>
               <span className="btn-arrow">→</span>
             </Link>
-            <Link to="/explorer" className="dj-btn-outline">
-              <span className="btn-text">View Explorer</span>
-              <span className="btn-icon">⬡</span>
-            </Link>
           </div>
           <div className="dj-stats-row">
             {statsData.map((stat, i) => (
@@ -177,7 +173,6 @@ export function HomePage() {
                 onMouseLeave={() => setHoveredStat(null)}
                 style={{ transform: hoveredStat === i ? 'translateY(-8px)' : 'translateY(0)' }}
               >
-                <span className="dj-stat-icon">{stat.icon}</span>
                 <span className="dj-stat-val">{stat.value}</span>
                 <span className="dj-stat-label">{stat.label}</span>
                 <div className="stat-progress" style={{ width: hoveredStat === i ? '100%' : '0%' }} />
@@ -244,17 +239,16 @@ export function HomePage() {
           </div>
           <div className="dj-tabs">
             {[
-              { key: "citizens", label: "Citizens", tag: "PUBLIC_USER", icon: "👥" },
-              { key: "police", label: "Police", tag: "INVESTIGATOR", icon: "👮" },
-              { key: "forensic", label: "Forensic", tag: "FORENSIC_ANALYST", icon: "🔬" },
-              { key: "court", label: "Court", tag: "COURT", icon: "⚖" },
+              { key: "citizens", label: "Citizens", tag: "PUBLIC_USER" },
+              { key: "police", label: "Police", tag: "INVESTIGATOR"},
+              { key: "forensic", label: "Forensic", tag: "FORENSIC_ANALYST" },
+              { key: "court", label: "Court", tag: "COURT"},
             ].map((role) => (
               <button 
                 key={role.key} 
                 className={`dj-tab ${activeRole === role.key ? "active" : ""}`} 
                 onClick={() => setActiveTab(role.key as RoleKey)}
               >
-                <span className="dj-tab-icon">{role.icon}</span>
                 <span>
                   <span className="dj-tab-label">{role.label}</span>
                   <span className="dj-tab-tag">{role.tag}</span>
@@ -291,21 +285,18 @@ export function HomePage() {
           <div className="dj-trust-grid">
             <div className="dj-trust-stat">
               <div className="trust-shimmer" />
-              <span className="dj-trust-icon">🔒</span>
               <span className="dj-trust-val">256-bit</span>
               <span className="dj-trust-lbl">ENCRYPTION</span>
               <p className="dj-trust-desc">Military-grade encryption for all data in transit and at rest.</p>
             </div>
             <div className="dj-trust-stat">
               <div className="trust-shimmer" />
-              <span className="dj-trust-icon">⏱</span>
               <span className="dj-trust-val">99.99%</span>
               <span className="dj-trust-lbl">UPTIME</span>
               <p className="dj-trust-desc">Guaranteed availability with redundant distributed infrastructure.</p>
             </div>
             <div className="dj-trust-stat">
               <div className="trust-shimmer" />
-              <span className="dj-trust-icon">✔</span>
               <span className="dj-trust-val">ISO</span>
               <span className="dj-trust-lbl">CERTIFIED</span>
               <p className="dj-trust-desc">ISO 27001 certified for information security management systems.</p>
@@ -313,16 +304,14 @@ export function HomePage() {
           </div>
           <div className="dj-trust-wide-grid">
             <div className="dj-trust-wide">
-              <span className="dj-tw-icon">🔒</span>
               <div>
                 <h4>Evidence Integrity</h4>
-                <p>Every file hashed and verifiable on blockchain with tamper-proof timestamps.</p>
+                <p>Every file hashed and verifiable with tamper-proof timestamps.</p>
                 <span className="dj-trust-badge">IMMUTABLE</span>
               </div>
               <div className="trust-wide-glow" />
             </div>
             <div className="dj-trust-wide">
-              <span className="dj-tw-icon">🤖</span>
               <div>
                 <h4>Smart Governance</h4>
                 <p>Automated approvals and intelligent workflows powered by AI and smart contracts.</p>
@@ -331,7 +320,6 @@ export function HomePage() {
               <div className="trust-wide-glow" />
             </div>
             <div className="dj-trust-wide">
-              <span className="dj-tw-icon">👁</span>
               <div>
                 <h4>Citizen Trust</h4>
                 <p>Live updates and transparent case history accessible anytime, anywhere.</p>
@@ -356,7 +344,6 @@ export function HomePage() {
           <div className="dj-hero-btns">
             <Link to="/register" className="dj-btn-primary dj-btn-lg">
               <span className="btn-text">Register Now</span>
-              <span className="btn-sparkle">✨</span>
             </Link>
             <Link to="/login" className="dj-btn-outline dj-btn-lg">
               <span className="btn-text">Login</span>
@@ -367,7 +354,6 @@ export function HomePage() {
             <li><span className="perk-check">✓</span> FREE TRIAL</li>
             <li><span className="perk-check">✓</span> NO SETUP FEE</li>
             <li><span className="perk-check">✓</span> 24/7 SUPPORT</li>
-            <li><span className="perk-check">✓</span> BLOCKCHAIN VERIFIED</li>
           </ul>
         </div>
       </section>
@@ -377,20 +363,8 @@ export function HomePage() {
         <div className="dj-container">
           <div className="dj-footer-grid">
             <div className="dj-footer-brand">
-              <h3><span>⚖</span> Decentralized Justice</h3>
-              <p>Modern legal transparency platform powered by blockchain technology for fair and efficient justice delivery.</p>
-              <div className="dj-social-links">
-                <Link to="#" className="social-link">𝕏 Twitter</Link>
-                <Link to="#" className="social-link">in LinkedIn</Link>
-                <Link to="#" className="social-link">⌨ GitHub</Link>
-              </div>
-            </div>
-            <div className="dj-footer-col">
-              <h4>Platform</h4>
-              <Link to="/login">Login</Link>
-              <Link to="/register">Register</Link>
-              <Link to="/explorer">Explorer</Link>
-              <Link to="/about">About</Link>
+              <h3><span>⚖</span> Justice System</h3>
+              <p>Modern legal transparency platform for fair and efficient justice delivery.</p>
             </div>
             <div className="dj-footer-col">
               <h4>Support</h4>
@@ -411,7 +385,7 @@ export function HomePage() {
           </div>
           <div className="dj-footer-bottom">
             <div className="footer-glow" />
-            © 2024 DECENTRALIZED JUSTICE · ALL RIGHTS RESERVED · BUILT WITH BLOCKCHAIN FOR TRANSPARENCY
+            © 2024 DECENTRALIZED JUSTICE · ALL RIGHTS RESERVED
           </div>
         </div>
       </footer>

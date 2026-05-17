@@ -4,10 +4,10 @@ import { useState, useEffect } from "react";
 import { getToken } from "../services/auth";
 
 const NAV_ITEMS = [
-  { to: "/", label: "Home", icon: "🏠" },
-  { to: "/login", label: "Login", icon: "🔐" },
-  { to: "/register", label: "Register", icon: "📝" },
-  { to: "/app", label: "Dashboard", icon: "📊" },
+  { to: "/", label: "Home" },
+  { to: "/login", label: "Login"},
+  { to: "/register", label: "Register"},
+  { to: "/app", label: "Dashboard" },
 ];
 
 export function TopNav() {
@@ -57,7 +57,7 @@ export function TopNav() {
         <div className="top-nav-inner">
           <NavLink to="/" className="brand" aria-label="Home">
             <div className="brand-mark">⚖</div>
-            <span className="brand-text">Decentralized Justice</span>
+            <span className="brand-text"> Justice System</span>
           </NavLink>
 
           {/* Desktop Navigation */}
@@ -71,7 +71,6 @@ export function TopNav() {
                 }
                 aria-label={item.label}
               >
-                <span className="nav-icon" aria-hidden="true">{item.icon}</span>
                 <span>{item.label}</span>
               </NavLink>
             ))}
@@ -122,7 +121,6 @@ export function TopNav() {
               }
               aria-label={item.label}
             >
-              <span className="side-icon" aria-hidden="true">{item.icon}</span>
               <span>{item.label}</span>
             </NavLink>
           ))}
